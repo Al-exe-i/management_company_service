@@ -1,4 +1,4 @@
-from app.models.ticket_complaint import (  # <- ВАЖНО: здесь должен быть файл с реальными моделями
+from app.models.ticket_complaint import (
     TicketComplaint,
     ComplaintFile,
     ComplaintType,

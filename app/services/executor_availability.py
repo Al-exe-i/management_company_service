@@ -29,7 +29,7 @@ def _is_time_in_range(start: time | None, end: time | None, current: time) -> bo
     if start <= end:
         return start <= current < end
 
-    # Night shifts are rare here, but this keeps the check correct if one is configured.
+
     return current >= start or current < end
 
 

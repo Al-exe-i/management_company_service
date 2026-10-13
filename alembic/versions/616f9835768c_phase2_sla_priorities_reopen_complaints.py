@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-# revision identifiers, used by Alembic.
+
 revision: str = "616f9835768c"
 down_revision: Union[str, Sequence[str], None] = "3e032eb86786"
 branch_labels: Union[str, Sequence[str], None] = None
@@ -30,11 +30,11 @@ ticketpriority = sa.Enum(
 def upgrade() -> None:
     """Upgrade schema."""
 
-    # Сначала создаём enum-тип в PostgreSQL
+
     ticketpriority.create(op.get_bind(), checkfirst=True)
 
-    # Потом добавляем колонку с временным server_default,
-    # потому что таблица tickets уже не пустая
+
+
     op.add_column(
         "tickets",
         sa.Column(
@@ -59,7 +59,7 @@ def upgrade() -> None:
     )
     op.add_column("tickets", sa.Column("last_reopened_at", sa.DateTime(), nullable=True))
 
-    # Заполняем существующие записи
+
     op.execute(
         """
         UPDATE tickets
@@ -96,7 +96,7 @@ def upgrade() -> None:
         """
     )
 
-    # Убираем временные дефолты
+
     op.alter_column("tickets", "priority", server_default=None)
     op.alter_column("tickets", "reopened_count", server_default=None)
 

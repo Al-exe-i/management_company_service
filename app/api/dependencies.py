@@ -4,14 +4,14 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
 
-# Импорты наших модулей
+
 from app.db.session import SessionLocal
 from app.core.config import settings
 from app.schemas.token import TokenData
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
 
-# Указываем URL для получения токена (для Swagger UI)
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
@@ -33,7 +33,7 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        # Декодируем токен
+
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
 
         user_id: str | None = payload.get("sub")
@@ -45,9 +45,9 @@ def get_current_user(
     except JWTError:
         raise credentials_exception
 
-    # Проверяем пользователя в БД
+
     user_repo = UserRepository(db)
-    # Важно: конвертируем user_id в int, так как в БД id - это Integer
+
     user = user_repo.get_by_id(int(token_data.user_id))
 
     if user is None:

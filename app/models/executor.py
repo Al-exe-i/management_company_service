@@ -90,7 +90,7 @@ class ExecutorWorkSchedule(Base):
     id = Column(Integer, primary_key=True, index=True)
     executor_id = Column(Integer, ForeignKey("executor_profiles.id"), nullable=False, index=True)
 
-    weekday = Column(Integer, nullable=False)  # 0 Monday ... 6 Sunday
+    weekday = Column(Integer, nullable=False)
     work_start = Column(Time, nullable=False, default=time(hour=9, minute=0))
     work_end = Column(Time, nullable=False, default=time(hour=18, minute=0))
     is_active = Column(Boolean, nullable=False, default=True)

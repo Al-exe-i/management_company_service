@@ -117,7 +117,7 @@ class PushNotificationService:
                     ),
                 )
                 messaging.send(firebase_message)
-            except Exception as exc:  # pragma: no cover - depends on external FCM state
+            except Exception as exc:
                 if self._looks_like_invalid_token(exc):
                     token_obj.is_active = False
                     token_obj.updated_at = datetime.utcnow()
@@ -156,7 +156,7 @@ class PushNotificationService:
         try:
             import firebase_admin
             from firebase_admin import credentials, messaging
-        except Exception as exc:  # pragma: no cover - optional dependency guard
+        except Exception as exc:
             logger.warning("firebase-admin is not available, push notifications are skipped: %s", exc)
             return None
 
@@ -165,6 +165,6 @@ class PushNotificationService:
                 cred = credentials.Certificate(service_account_file)
                 firebase_admin.initialize_app(cred)
             return messaging
-        except Exception as exc:  # pragma: no cover - depends on service account file
+        except Exception as exc:
             logger.warning("Firebase initialization failed, push notifications are skipped: %s", exc)
             return None

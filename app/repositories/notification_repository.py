@@ -21,7 +21,7 @@ class NotificationRepository(BaseRepository[Notification]):
     ):
         q = self.db.query(Notification).filter(Notification.user_id == user_id)
         if unread_only:
-            q = q.filter(Notification.is_read == False)  # noqa: E712
+            q = q.filter(Notification.is_read == False)
         if notif_type:
             q = q.filter(Notification.notif_type == notif_type)
         return q.order_by(desc(Notification.created_at)).offset(skip).limit(limit).all()
@@ -29,13 +29,13 @@ class NotificationRepository(BaseRepository[Notification]):
     def count_for_user(self, user_id: int, unread_only: bool = False) -> int:
         q = self.db.query(func.count(Notification.id)).filter(Notification.user_id == user_id)
         if unread_only:
-            q = q.filter(Notification.is_read == False)  # noqa: E712
+            q = q.filter(Notification.is_read == False)
         return int(q.scalar() or 0)
 
     def unread_by_type_for_user(self, user_id: int) -> dict[str, int]:
         rows = (
             self.db.query(Notification.notif_type, func.count(Notification.id))
-            .filter(Notification.user_id == user_id, Notification.is_read == False)  # noqa: E712
+            .filter(Notification.user_id == user_id, Notification.is_read == False)
             .group_by(Notification.notif_type)
             .all()
         )

@@ -10,7 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 
-# revision identifiers, used by Alembic.
+
 revision: str = "d450d1c926f5"
 down_revision: Union[str, Sequence[str], None] = "73f6fae7681b"
 branch_labels: Union[str, Sequence[str], None] = None
@@ -18,7 +18,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # 1) Создаём enum-тип ticketfilekind, если его нет
+
     op.execute("""
     DO $$
     BEGIN
@@ -28,7 +28,7 @@ def upgrade() -> None:
     END $$;
     """)
 
-    # 2) Добавляем колонку kind, если её нет (с DEFAULT, чтобы не упасть на существующих строках)
+
     op.execute("""
     DO $$
     BEGIN
@@ -43,8 +43,8 @@ def upgrade() -> None:
     END $$;
     """)
 
-    # 3) (Опционально) убрать DEFAULT можно позже, но лучше оставить для совместимости
-    # op.execute("ALTER TABLE ticket_files ALTER COLUMN kind DROP DEFAULT;")
+
+
 
 
 def downgrade() -> None:

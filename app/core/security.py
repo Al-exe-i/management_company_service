@@ -10,7 +10,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     Проверяет пароль, используя 'bcrypt'.
     Принимает строки, внутри конвертирует в байты.
     """
-    # bcrypt требует bytes, поэтому кодируем
+
     password_byte_enc = plain_password.encode('utf-8')
     hashed_password_byte_enc = hashed_password.encode('utf-8')
 
@@ -35,15 +35,15 @@ def create_access_token(subject: str | Any) -> str:
     Аргумент expires_delta убран, время берется строго из настроек.
     Добавлены claims: iat (issued at), nbf (not before).
     """
-    # Используем timezone-aware datetime
+
     now = datetime.now(timezone.utc)
     expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
     to_encode = {
         "sub": str(subject),
         "exp": expire,
-        "iat": now,  # Время выдачи
-        "nbf": now  # Токен не валиден до этого времени
+        "iat": now,
+        "nbf": now
     }
 
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)

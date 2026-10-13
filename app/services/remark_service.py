@@ -71,7 +71,7 @@ class RemarkService:
         self._ensure_recipient_can_view(current_user)
         return self.repo.list_my(current_user.id, skip=skip, limit=limit, status=status)
 
-    # ✅ NEW
+
     def list_all(
         self,
         current_user: User,

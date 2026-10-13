@@ -181,7 +181,7 @@ class NotificationService:
         return obj
 
     def mark_all_read(self, user_id: int) -> int:
-        q = self.db.query(Notification).filter(Notification.user_id == user_id, Notification.is_read == False)  # noqa: E712
+        q = self.db.query(Notification).filter(Notification.user_id == user_id, Notification.is_read == False)
         updated = q.update({
             Notification.is_read: True,
             Notification.read_at: datetime.utcnow(),
@@ -196,7 +196,7 @@ class NotificationService:
                 Notification.user_id == user_id,
                 Notification.ban_conversation_id == conversation_id,
                 Notification.notif_type.in_(["ban_message_admin", "ban_message_resident"]),
-                Notification.is_read == False,  # noqa: E712
+                Notification.is_read == False,
             )
             .update({
                 Notification.is_read: True,
@@ -221,7 +221,7 @@ class NotificationService:
                 Notification.user_id == user_id,
                 Notification.message_conversation_id == conversation_id,
                 Notification.notif_type.in_(["message_new", "message_new_silent"]),
-                Notification.is_read == False,  # noqa: E712
+                Notification.is_read == False,
             )
             .update({
                 Notification.is_read: True,
@@ -245,7 +245,7 @@ class NotificationService:
             .filter(
                 Notification.ticket_id == ticket_id,
                 Notification.notif_type == "ticket_created",
-                Notification.is_read == False,  # noqa: E712
+                Notification.is_read == False,
             )
             .update({
                 Notification.is_read: True,

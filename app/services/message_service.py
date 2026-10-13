@@ -256,7 +256,7 @@ class MessageService:
                 Notification.user_id == user_id,
                 Notification.message_conversation_id == conversation_id,
                 Notification.notif_type.in_(["message_new", "message_new_silent"]),
-                Notification.is_read == False,  # noqa: E712
+                Notification.is_read == False,
             )
             .scalar()
             or 0

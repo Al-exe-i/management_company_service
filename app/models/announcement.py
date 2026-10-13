@@ -14,9 +14,9 @@ class Announcement(Base):
     content = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # NULL means the announcement is visible to all houses.
+
     target_house_id = Column(Integer, ForeignKey("houses.id"), nullable=True)
-    # NULL means the announcement is visible to all entrances of the selected house.
+
     target_entrance_id = Column(Integer, ForeignKey("house_entrances.id"), nullable=True)
 
     author_id = Column(Integer, ForeignKey("users.id"))

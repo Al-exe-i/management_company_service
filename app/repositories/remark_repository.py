@@ -38,7 +38,7 @@ class RemarkRepository:
             q = q.filter(Remark.status == status)
         return q.offset(skip).limit(limit).all()
 
-    # ✅ NEW: auditor sees ALL
+
     def list_all(
         self,
         skip: int = 0,

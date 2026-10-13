@@ -19,7 +19,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title=settings.APP_TITLE, lifespan=lifespan)
 
-# CORS для web frontend (Nuxt dev server)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[

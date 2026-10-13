@@ -20,16 +20,16 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
 
-    # ---------------------------------------------------------------------
-    # 0) PostgreSQL: ДОБАВЛЯЕМ НОВЫЕ ЗНАЧЕНИЯ В УЖЕ СУЩЕСТВУЮЩИЙ ENUM ticketstatus
-    #    Alembic autogenerate это почти никогда не делает сам.
-    #
-    #    ВАЖНО: здесь значения в нижнем регистре, как в твоём Enum:
-    #    not_confirmed, needs_reassign, complaint
-    #
-    #    Если твой тип называется НЕ "ticketstatus", выполни запрос:
-    #    SELECT t.typname, e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid=e.enumtypid ORDER BY 1,2;
-    # ---------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
     op.execute("""
     DO $$
     BEGIN
@@ -66,9 +66,9 @@ def upgrade() -> None:
     END $$;
     """)
 
-    # ---------------------------------------------------------------------
-    # 1) Таблицы жалоб (если у тебя их раньше не было)
-    # ---------------------------------------------------------------------
+
+
+
     op.create_table(
         'ticket_complaints',
         sa.Column('id', sa.Integer(), nullable=False),
@@ -99,9 +99,9 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_complaint_files_id'), 'complaint_files', ['id'], unique=False)
 
-    # ---------------------------------------------------------------------
-    # 2) Таблица notifications (лучше дать is_read дефолт false)
-    # ---------------------------------------------------------------------
+
+
+
     op.create_table(
         'notifications',
         sa.Column('id', sa.Integer(), nullable=False),
@@ -122,4 +122,4 @@ def upgrade() -> None:
     op.create_index(op.f('ix_notifications_id'), 'notifications', ['id'], unique=False)
     op.create_index(op.f('ix_notifications_user_id'), 'notifications', ['user_id'], unique=False)
 
-    # ------------------------------------
+

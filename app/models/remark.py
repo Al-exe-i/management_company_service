@@ -17,8 +17,8 @@ class Remark(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    issuer_id = Column(Integer, ForeignKey("users.id"), nullable=False)     # кто вынес (dispatcher/auditor)
-    executor_id = Column(Integer, ForeignKey("users.id"), nullable=False)   # кому (executor)
+    issuer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    executor_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
     comment = Column(Text, nullable=False)
 

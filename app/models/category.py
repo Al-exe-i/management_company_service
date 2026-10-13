@@ -7,9 +7,9 @@ class Category(Base):
     __tablename__ = "categories"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, index=True)  # Название
+    name = Column(String, nullable=False, index=True)
     category_type = Column(String(32), nullable=False, default="problem", index=True)
 
-    # Связь: Одна категория -> Много заявок
+
     tickets = relationship("Ticket", back_populates="category", foreign_keys="Ticket.category_id")
     place_tickets = relationship("Ticket", back_populates="place_category", foreign_keys="Ticket.place_category_id")

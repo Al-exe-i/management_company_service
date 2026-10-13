@@ -44,7 +44,7 @@ def list_my(
     return service.list_my(current_user, skip=skip, limit=limit, status=status)
 
 
-# ✅ NEW: auditor/admin sees all remarks
+
 @router.get("/all", response_model=list[RemarkResponse])
 def list_all(
     skip: int = 0,
