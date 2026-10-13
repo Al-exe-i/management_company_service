@@ -24,6 +24,8 @@ class ExecutorLoadResponse(BaseModel):
     done_tickets: int
     active_remarks: int
     quality_complaints_on_tickets: int
+    rating: float | None = None
+    rating_count: int = 0
 
 
 class ExecutorRecommendationResponse(BaseModel):
@@ -37,6 +39,8 @@ class ExecutorRecommendationResponse(BaseModel):
     active_score: float
     matches_category: bool
     recommendation_reason: str
+    rating: float | None = None
+    rating_count: int = 0
 
 
 class BulkTicketSkipResponse(BaseModel):

@@ -600,6 +600,8 @@ class TicketComplaintService:
                 ticket.assigned_at = None
                 ticket.started_at = None
                 ticket.done_at = None
+                ticket.result_comment = None
+                ticket.resident_rating = None
 
             if complaint.complaint_type == ComplaintType.QUALITY:
                 history_comment = "Жалоба на качество принята. Заявка возвращена на повторную обработку и ожидает нового назначения исполнителя."

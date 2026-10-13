@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta
 from typing import List
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
+from app.models.history import TicketHistory
 from app.models.ticket import Ticket, TicketPriority, TicketStatus
 from app.repositories.base import BaseRepository
 
@@ -93,3 +94,51 @@ class TicketRepository(BaseRepository[Ticket]):
             query = query.filter(Ticket.apartment == apartment)
 
         return query.order_by(Ticket.created_at.desc()).all()
+
+    def get_for_executor(
+            self,
+            executor_id: int,
+            status: TicketStatus | None = None,
+            limit: int = 100,
+            skip: int = 0,
+            created_from: datetime | None = None,
+            created_to: datetime | None = None,
+    ) -> List[Ticket]:
+        completed_ticket_ids = (
+            self.db.query(TicketHistory.ticket_id)
+            .filter(
+                TicketHistory.user_id == executor_id,
+                func.lower(TicketHistory.new_status) == TicketStatus.DONE.value,
+            )
+        )
+
+        query = self.db.query(Ticket)
+
+        if status in [TicketStatus.ASSIGNED, TicketStatus.IN_PROGRESS]:
+            query = query.filter(
+                Ticket.executor_id == executor_id,
+                Ticket.status == status,
+            )
+        elif status in [TicketStatus.DONE, TicketStatus.CLOSED]:
+            query = query.filter(
+                or_(
+                    and_(Ticket.executor_id == executor_id, Ticket.status.in_([TicketStatus.DONE, TicketStatus.CLOSED])),
+                    Ticket.id.in_(completed_ticket_ids),
+                )
+            )
+        else:
+            query = query.filter(
+                or_(
+                    Ticket.executor_id == executor_id,
+                    Ticket.id.in_(completed_ticket_ids),
+                )
+            )
+            if status:
+                query = query.filter(Ticket.status == status)
+
+        if created_from:
+            query = query.filter(Ticket.created_at >= created_from)
+        if created_to:
+            query = query.filter(Ticket.created_at <= created_to)
+
+        return query.order_by(Ticket.created_at.desc()).offset(skip).limit(limit).all()

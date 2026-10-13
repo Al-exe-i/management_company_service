@@ -10,6 +10,7 @@ from app.models.category import Category
 from app.models.remark import Remark, RemarkStatus
 from app.models.ticket import Ticket, TicketPriority, TicketStatus
 from app.models.ticket_complaint import ComplaintStatus, ComplaintType, TicketComplaint
+from app.models.ticket_executor_review import TicketExecutorReview
 from app.models.user import User, UserRole
 from app.schemas.operations import (
     BulkAssignTicketsRequest,
@@ -73,6 +74,33 @@ class OperationsService:
                 seen.add(ticket_id)
                 result.append(ticket_id)
         return result
+
+    def _executor_rating(self, executor_id: int, house_id: int | None = None) -> tuple[float | None, int]:
+        review_query = self.db.query(TicketExecutorReview.rating).join(Ticket, Ticket.id == TicketExecutorReview.ticket_id).filter(
+            TicketExecutorReview.executor_id == executor_id,
+        )
+        if house_id is not None:
+            review_query = review_query.filter(Ticket.house_id == house_id)
+        ratings = [int(value) for (value,) in review_query.all() if value is not None]
+
+        legacy_query = self.db.query(Ticket).filter(Ticket.executor_id == executor_id, Ticket.resident_rating.isnot(None))
+        if house_id is not None:
+            legacy_query = legacy_query.filter(Ticket.house_id == house_id)
+        for ticket in legacy_query.all():
+            has_review = (
+                self.db.query(TicketExecutorReview.id)
+                .filter(
+                    TicketExecutorReview.ticket_id == ticket.id,
+                    TicketExecutorReview.executor_id == executor_id,
+                )
+                .first()
+            )
+            if not has_review:
+                ratings.append(int(ticket.resident_rating))
+
+        if not ratings:
+            return None, 0
+        return round(sum(ratings) / len(ratings), 1), len(ratings)
 
     def get_dashboard(self, house_id: int | None = None, current_user: User | None = None) -> OperationsDashboardResponse:
         if current_user is not None:
@@ -140,6 +168,7 @@ class OperationsService:
             if house_id is not None:
                 complaint_q = complaint_q.filter(Ticket.house_id == house_id)
             quality_complaints_on_tickets = complaint_q.scalar() or 0
+            rating, rating_count = self._executor_rating(executor.id, house_id=house_id)
 
             results.append(
                 ExecutorLoadResponse(
@@ -151,6 +180,8 @@ class OperationsService:
                     done_tickets=done_tickets,
                     active_remarks=active_remarks,
                     quality_complaints_on_tickets=quality_complaints_on_tickets,
+                    rating=rating,
+                    rating_count=rating_count,
                 )
             )
 
@@ -213,6 +244,8 @@ class OperationsService:
                     active_score=active_score,
                     matches_category=matches_category,
                     recommendation_reason=", ".join(reasons),
+                    rating=item.rating,
+                    rating_count=item.rating_count,
                 )
             )
 

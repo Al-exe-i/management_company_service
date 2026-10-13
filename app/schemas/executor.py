@@ -135,6 +135,8 @@ class ExecutorAvailabilityResponse(BaseModel):
     assigned_count: int
     in_progress_count: int
     active_total_count: int
+    rating: float | None = None
+    rating_count: int = 0
 
     class Config:
         from_attributes = True

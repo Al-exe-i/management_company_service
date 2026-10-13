@@ -1,10 +1,21 @@
 from fastapi import APIRouter, Body, Depends, HTTPException, File, UploadFile
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 from typing import List
 from datetime import datetime
 
 from app.api.dependencies import get_db, get_current_user
-from app.schemas.ticket import TicketAssign, TicketCancelRequest, TicketCreate, TicketFileResponse, TicketResponse, TicketUpdate
+from app.schemas.ticket import (
+    TicketAssign,
+    TicketCancelRequest,
+    TicketCreate,
+    TicketExecutorReviewCreate,
+    TicketExecutorReviewParticipant,
+    TicketExecutorReviewResponse,
+    TicketFileResponse,
+    TicketResponse,
+    TicketUpdate,
+)
 from app.services.ticket_service import TicketService
 from app.models.user import User, UserRole
 from app.schemas.history import HistoryResponse
@@ -13,6 +24,14 @@ from app.models.ticket import TicketPriority, TicketStatus
 from app.services.notification_service import NotificationService
 
 router = APIRouter()
+
+
+def _executor_completed_ticket(ticket, executor_id: int) -> bool:
+    return any(
+        history.user_id == executor_id
+        and str(history.new_status or "").lower() == TicketStatus.DONE.value
+        for history in (ticket.history or [])
+    )
 
 
 def _ticket_response(ticket, current_user: User) -> TicketResponse:
@@ -31,6 +50,23 @@ def _ticket_response(ticket, current_user: User) -> TicketResponse:
         response.author.contact_phone = None
     if current_user.role == UserRole.RESIDENT and response.author_id != current_user.id:
         response.external_contact_phone = None
+    if (
+        current_user.role == UserRole.EXECUTOR
+        and ticket.executor_id != current_user.id
+        and _executor_completed_ticket(ticket, current_user.id)
+    ):
+        response.status = TicketStatus.DONE
+        response.status_label = "Выполнена Вами"
+        response.executor_id = current_user.id
+        response.executor = None
+        response.result_comment = None
+        response.resident_rating = None
+        response.files = [
+            file
+            for file in response.files
+            if str(file.kind or "").upper() != "AFTER"
+        ]
+        response.historical_executor_view = True
     return response
 
 
@@ -161,15 +197,50 @@ def read_ticket_history(
     if current_user.role == UserRole.RESIDENT and ticket.author_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only ticket author can view history")
 
-    history = (
+    query = (
         db.query(TicketHistory)
         .options(joinedload(TicketHistory.user))
         .filter(TicketHistory.ticket_id == ticket_id)
-        .order_by(TicketHistory.created_at.desc())
-        .all()
     )
 
+    if current_user.role == UserRole.EXECUTOR:
+        query = query.filter(
+            or_(
+                TicketHistory.user_id == current_user.id,
+                and_(
+                    TicketHistory.new_status == TicketStatus.CREATED.value,
+                    TicketHistory.comment.ilike("Заявка создана%"),
+                ),
+            )
+        )
+
+    history = query.order_by(TicketHistory.created_at.desc()).all()
+
     return history
+
+
+@router.get("/{ticket_id}/executor-reviews", response_model=List[TicketExecutorReviewParticipant])
+def read_ticket_executor_reviews(
+        ticket_id: int,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    service = TicketService(db)
+    return service.list_executor_reviews_for_ticket(ticket_id, current_user)
+
+
+@router.post("/{ticket_id}/executor-reviews", response_model=TicketExecutorReviewResponse)
+def save_ticket_executor_review(
+        ticket_id: int,
+        payload: TicketExecutorReviewCreate,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    service = TicketService(db)
+    review = service.create_executor_review(ticket_id, payload, current_user)
+    db.commit()
+    db.refresh(review)
+    return service._review_payload(review)
 
 
 @router.get("/history/all", response_model=List[HistoryResponse])

@@ -16,9 +16,9 @@ class TicketStatus(str, enum.Enum):
     CLOSED = "closed"
 
 
-# Совместимость со старым operations-модулем
-# Поле priority в таблице сейчас может и не использоваться,
-# но сам enum нужен для импортов схем и сервисов.
+
+
+
 class TicketPriority(str, enum.Enum):
     LOW = "low"
     NORMAL = "normal"
@@ -82,7 +82,7 @@ class Ticket(Base):
     house_id = Column(Integer, ForeignKey("houses.id"), nullable=True)
     apartment_id = Column(Integer, ForeignKey("apartments.id"), nullable=True, index=True)
 
-    # Старое поле сохраняем для совместимости с текущим mobile/backend-потоком
+
     apartment = Column(String, nullable=True)
     show_contact_phone = Column(Boolean, nullable=False, default=False)
     is_external_request = Column(Boolean, nullable=False, default=False)
@@ -98,6 +98,8 @@ class Ticket(Base):
 
     files = relationship("TicketFile", back_populates="ticket")
     result_comment = Column(Text, nullable=True)
+    resident_rating = Column(Integer, nullable=True)
 
     history = relationship("TicketHistory", back_populates="ticket", order_by="desc(TicketHistory.created_at)")
     comments = relationship("TicketComment", back_populates="ticket", order_by="TicketComment.created_at")
+    executor_reviews = relationship("TicketExecutorReview", back_populates="ticket", cascade="all, delete-orphan")

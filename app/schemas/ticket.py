@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.ticket import TicketPriority, TicketStatus
 from app.schemas.location import ApartmentResponse
@@ -72,6 +72,7 @@ class TicketUpdate(BaseModel):
     executor_id: int | None = None
     description: str | None = None
     comment: str | None = None
+    resident_rating: int | None = Field(default=None, ge=1, le=5)
 
 
 class TicketAssign(BaseModel):
@@ -81,6 +82,45 @@ class TicketAssign(BaseModel):
 
 class TicketCancelRequest(BaseModel):
     reason: str | None = None
+
+
+class TicketExecutorReviewCreate(BaseModel):
+    executor_id: int
+    rating: int = Field(..., ge=1, le=5)
+    review_text: str | None = Field(default=None, max_length=2000)
+
+
+class TicketExecutorReviewExecutor(BaseModel):
+    id: int
+    full_name: str
+    role: str | None = None
+    specialty: str | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class TicketExecutorReviewResponse(BaseModel):
+    id: int | None = None
+    ticket_id: int
+    ticket_title: str | None = None
+    executor_id: int
+    resident_id: int | None = None
+    rating: int | None = None
+    review_text: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    executor: TicketExecutorReviewExecutor | None = None
+    legacy: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class TicketExecutorReviewParticipant(BaseModel):
+    executor: TicketExecutorReviewExecutor
+    review: TicketExecutorReviewResponse | None = None
+    can_review: bool = False
 
 
 class TicketResponse(TicketBase):
@@ -100,7 +140,9 @@ class TicketResponse(TicketBase):
     executor: UserShortResponse | None = None
 
     result_comment: str | None = None
+    resident_rating: int | None = None
     files: list[TicketFileResponse] = []
+    historical_executor_view: bool = False
 
     class Config:
         from_attributes = True

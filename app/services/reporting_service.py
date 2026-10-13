@@ -12,6 +12,7 @@ from app.models.location import House
 from app.models.remark import Remark, RemarkStatus
 from app.models.ticket import Ticket, TicketPriority, TicketStatus
 from app.models.ticket_complaint import ComplaintStatus, ComplaintType, TicketComplaint
+from app.models.ticket_executor_review import TicketExecutorReview
 from app.models.user import User, UserRole
 from app.schemas.reporting import (
     AttentionTicketListResponse,
@@ -420,6 +421,24 @@ class ReportingService:
             executor_tickets = tickets_by_executor.get(executor.id, [])
             avg_assignment_values: list[float] = []
             avg_completion_values: list[float] = []
+            ticket_ids = [ticket.id for ticket in executor_tickets]
+            review_rows = []
+            if ticket_ids:
+                review_rows = (
+                    self.db.query(TicketExecutorReview.ticket_id, TicketExecutorReview.rating)
+                    .filter(
+                        TicketExecutorReview.executor_id == executor.id,
+                        TicketExecutorReview.ticket_id.in_(ticket_ids),
+                    )
+                    .all()
+                )
+            reviewed_ticket_ids = {ticket_id for ticket_id, _ in review_rows}
+            ratings = [rating for _, rating in review_rows if rating is not None]
+            ratings.extend(
+                ticket.resident_rating
+                for ticket in executor_tickets
+                if getattr(ticket, "resident_rating", None) is not None and ticket.id not in reviewed_ticket_ids
+            )
 
             for ticket in executor_tickets:
                 assignment_hours = self._hours_between(ticket.created_at, ticket.assigned_at)
@@ -446,6 +465,8 @@ class ReportingService:
                     active_remarks=active_remarks_by_executor.get(executor.id, 0),
                     avg_assignment_hours=self._avg_hours(avg_assignment_values),
                     avg_completion_hours=self._avg_hours(avg_completion_values),
+                    rating=round(sum(ratings) / len(ratings), 1) if ratings else None,
+                    rating_count=len(ratings),
                 )
             )
 

@@ -2,7 +2,7 @@ from datetime import date
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
 
-from app.core.auth_validation import validate_login_value, validate_password_value
+from app.core.auth_validation import validate_contact_phone_value, validate_login_value, validate_password_value
 from app.core.profanity import ensure_clean_text
 from app.core.security import get_password_hash
 from app.models.executor import (
@@ -14,6 +14,7 @@ from app.models.executor import (
 )
 from app.models.remark import Remark, RemarkStatus
 from app.models.ticket import Ticket, TicketStatus
+from app.models.ticket_executor_review import TicketExecutorReview
 from app.models.user import User, UserRole
 from app.repositories.user_repository import UserRepository
 from app.schemas.executor import (
@@ -109,6 +110,38 @@ class ExecutorService:
             .filter(Ticket.executor_id == user_id, Ticket.status.in_(list(statuses)))
             .count()
         )
+
+    def _executor_rating(self, user_id: int) -> tuple[float | None, int]:
+        ratings = [
+            int(value)
+            for (value,) in (
+                self.db.query(TicketExecutorReview.rating)
+                .filter(TicketExecutorReview.executor_id == user_id)
+                .all()
+            )
+            if value is not None
+        ]
+
+        legacy_tickets = (
+            self.db.query(Ticket)
+            .filter(Ticket.executor_id == user_id, Ticket.resident_rating.isnot(None))
+            .all()
+        )
+        for ticket in legacy_tickets:
+            has_review = (
+                self.db.query(TicketExecutorReview.id)
+                .filter(
+                    TicketExecutorReview.ticket_id == ticket.id,
+                    TicketExecutorReview.executor_id == user_id,
+                )
+                .first()
+            )
+            if not has_review:
+                ratings.append(int(ticket.resident_rating))
+
+        if not ratings:
+            return None, 0
+        return round(sum(ratings) / len(ratings), 1), len(ratings)
 
     def list_specialties(self):
         return (
@@ -252,12 +285,13 @@ class ExecutorService:
 
         specialties = self._validate_specialties(payload.specialty_ids, payload.primary_specialty_id)
         ensure_clean_text(payload.notes)
+        contact_phone = validate_contact_phone_value(payload.phone)
 
         user = User(
             full_name=f"{payload.last_name} {payload.first_name}".strip(),
             phone=login,
             login=login,
-            contact_phone=payload.phone,
+            contact_phone=contact_phone,
             password_hash=get_password_hash(password),
             role=UserRole.EXECUTOR,
             specialty=None,
@@ -274,7 +308,7 @@ class ExecutorService:
             first_name=payload.first_name,
             last_name=payload.last_name,
             middle_name=payload.middle_name,
-            phone=payload.phone,
+            phone=contact_phone,
             notes=payload.notes,
             is_active=payload.is_active,
         )
@@ -297,6 +331,8 @@ class ExecutorService:
         profile = self.get_executor(executor_id)
         data = payload.model_dump(exclude_unset=True)
         ensure_clean_text(data.get("notes"))
+        if "phone" in data:
+            data["phone"] = validate_contact_phone_value(data.get("phone"))
 
         specialty_ids = data.pop("specialty_ids", None)
         primary_specialty_id = data.pop("primary_specialty_id", None)
@@ -337,6 +373,8 @@ class ExecutorService:
         profile = self._get_executor_for_user_record(user)
         data = payload.model_dump(exclude_unset=True)
         ensure_clean_text(data.get("notes"))
+        if "phone" in data:
+            data["phone"] = validate_contact_phone_value(data.get("phone"))
 
         for forbidden_key in ["house_id", "is_active", "specialty_ids", "primary_specialty_id"]:
             data.pop(forbidden_key, None)
@@ -480,6 +518,8 @@ class ExecutorService:
                 first = profile.specialties[0]
                 primary_specialty = first.specialty.name if first.specialty else None
 
+            rating, rating_count = self._executor_rating(profile.user_id)
+
             result.append(
                 ExecutorAvailabilityResponse(
                     executor_id=profile.id,
@@ -494,6 +534,8 @@ class ExecutorService:
                     assigned_count=assigned_count,
                     in_progress_count=in_progress_count,
                     active_total_count=active_total_count,
+                    rating=rating,
+                    rating_count=rating_count,
                 )
             )
 
@@ -551,6 +593,8 @@ class ExecutorService:
             else:
                 score -= assigned_count * 4 + in_progress_count * 7
 
+            rating, rating_count = self._executor_rating(profile.user_id)
+
             result.append(
                 ExecutorRecommendationResponse(
                     executor_id=profile.id,
@@ -565,6 +609,8 @@ class ExecutorService:
                     assigned_count=assigned_count,
                     in_progress_count=in_progress_count,
                     active_total_count=active_total_count,
+                    rating=rating,
+                    rating_count=rating_count,
                     score=score,
                     reasons=reasons or ["Можно назначить по общей загрузке"],
                 )

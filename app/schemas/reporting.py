@@ -27,6 +27,8 @@ class ReportingSummaryResponse(BaseModel):
 
     avg_assignment_hours: float | None = None
     avg_completion_hours: float | None = None
+    rating: float | None = None
+    rating_count: int = 0
     avg_close_hours: float | None = None
 
 

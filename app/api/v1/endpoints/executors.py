@@ -19,8 +19,10 @@ from app.schemas.executor import (
     SpecialtyCreate,
     SpecialtyResponse,
 )
+from app.schemas.ticket import TicketExecutorReviewResponse
 from app.services.executor_availability import moscow_today
 from app.services.executor_service import ExecutorService
+from app.services.ticket_service import TicketService
 from app.services.permissions import can_create_users, can_manage_executor_schedules, is_staff_like
 
 router = APIRouter()
@@ -105,6 +107,15 @@ def get_my_executor_profile(
 ):
     service = ExecutorService(db)
     return service.get_executor_for_user(current_user)
+
+
+@router.get("/me/reviews", response_model=List[TicketExecutorReviewResponse])
+def get_my_executor_reviews(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    service = TicketService(db)
+    return service.list_reviews_for_executor(current_user)
 
 
 @router.patch("/me/profile", response_model=ExecutorProfileResponse)

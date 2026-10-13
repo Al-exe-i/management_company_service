@@ -16,7 +16,10 @@ from app.models.notification import Notification
 from app.models.push_device_token import PushDeviceToken
 from app.models.remark import Remark
 from app.models.ticket_comment import TicketComment
+from app.models.ticket_executor_review import TicketExecutorReview
 from app.models.house_info import EmergencyContact, HouseEvent, HouseInfoType, HouseSchedule
 from app.models.app_settings import AppSettings
 from app.models.ban_appeal import BanConversation, BanMessage
 from app.models.message import Message, MessageConversation, MessageFile, MessageParticipant
+from app.models.password_recovery import PasswordRecoveryRequest
+from app.models.resident_registration import ResidentRegistrationRequest

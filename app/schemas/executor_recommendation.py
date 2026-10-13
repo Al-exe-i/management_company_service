@@ -16,6 +16,8 @@ class ExecutorRecommendationResponse(BaseModel):
     assigned_count: int
     in_progress_count: int
     active_total_count: int
+    rating: float | None = None
+    rating_count: int = 0
 
     score: int
     reasons: list[str]

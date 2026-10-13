@@ -7,16 +7,18 @@ from typing import List
 from fastapi import HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
+from app.core.auth_validation import validate_contact_phone_value
 from app.core.profanity import ensure_clean_text
 from app.models.category import Category
 from app.models.executor import ExecutorProfile
 from app.models.history import TicketHistory
 from app.models.location import Apartment
 from app.models.ticket import Ticket, TicketFile, TicketFileKind, TicketPriority, TicketStatus
+from app.models.ticket_executor_review import TicketExecutorReview
 from app.models.user import User, UserRole
 from app.repositories.ticket_repository import TicketRepository
 from app.repositories.user_repository import UserRepository
-from app.schemas.ticket import TicketAssign, TicketCancelRequest, TicketCreate, TicketUpdate
+from app.schemas.ticket import TicketAssign, TicketCancelRequest, TicketCreate, TicketExecutorReviewCreate, TicketUpdate
 from app.services.executor_availability import get_executor_availability_state, moscow_today
 from app.services.live_update_hub import live_update_hub
 from app.services.notification_service import NotificationService
@@ -24,7 +26,8 @@ from app.services.notification_service import NotificationService
 
 class TicketService:
     EXECUTOR_COMMENT_PREFIX = "Комментарий мастера:"
-    RESIDENT_REVIEW_PREFIX = "Отзыв жильца:"
+    RESIDENT_REVIEW_PREFIX = "Отзыв жителя:"
+    LEGACY_RESIDENT_REVIEW_PREFIX = "Отзыв жильца:"
     RESIDENT_CANCEL_REASONS = {
         "too_long": "Слишком долго ждать",
         "price": "Не устроила цена",
@@ -67,6 +70,19 @@ class TicketService:
         if not category:
             raise HTTPException(status_code=400, detail=f"Unsupported {field_name}")
 
+    def _ensure_executor_pool_exists(self) -> None:
+        executor_exists = (
+            self.db.query(ExecutorProfile.id)
+            .join(User, User.id == ExecutorProfile.user_id)
+            .filter(User.role == UserRole.EXECUTOR, ExecutorProfile.is_active.is_(True))
+            .first()
+        )
+        if not executor_exists:
+            raise HTTPException(
+                status_code=400,
+                detail="Создание заявки временно недоступно: в системе должен быть добавлен хотя бы один исполнитель.",
+            )
+
     def _add_history(
         self,
         ticket_id: int,
@@ -93,10 +109,12 @@ class TicketService:
             return "", ""
 
         review = ""
-        if self.RESIDENT_REVIEW_PREFIX in text:
-            before, after = text.split(self.RESIDENT_REVIEW_PREFIX, 1)
-            text = before.strip()
-            review = after.strip()
+        for review_prefix in [self.RESIDENT_REVIEW_PREFIX, self.LEGACY_RESIDENT_REVIEW_PREFIX]:
+            if review_prefix in text:
+                before, after = text.split(review_prefix, 1)
+                text = before.strip()
+                review = after.strip()
+                break
 
         executor_comment = text.replace(self.EXECUTOR_COMMENT_PREFIX, "", 1).strip()
         return executor_comment, review
@@ -109,10 +127,233 @@ class TicketService:
             parts.append(f"{self.RESIDENT_REVIEW_PREFIX} {resident_review}")
         return "\n\n".join(parts) if parts else None
 
+    def _executor_review_short(self, executor: User | None) -> dict | None:
+        if executor is None:
+            return None
+        role = getattr(executor, "role", None)
+        role_value = role.value if hasattr(role, "value") else str(role or "")
+        specialty = getattr(executor, "specialty", None)
+        profile = getattr(executor, "executor_profile", None)
+        if profile and getattr(profile, "specialties", None):
+            primary = next((item for item in profile.specialties if item.is_primary and item.specialty), None)
+            if primary is None:
+                primary = next((item for item in profile.specialties if item.specialty), None)
+            if primary and primary.specialty:
+                specialty = primary.specialty.name or primary.specialty.code
+        return {
+            "id": executor.id,
+            "full_name": self._format_actor_name(executor),
+            "role": role_value,
+            "specialty": specialty,
+        }
+
+    def _review_payload(self, review: TicketExecutorReview, *, legacy: bool = False) -> dict:
+        return {
+            "id": review.id,
+            "ticket_id": review.ticket_id,
+            "ticket_title": review.ticket.title if review.ticket else None,
+            "executor_id": review.executor_id,
+            "resident_id": review.resident_id,
+            "rating": review.rating,
+            "review_text": review.review_text,
+            "created_at": review.created_at,
+            "updated_at": review.updated_at,
+            "executor": self._executor_review_short(review.executor),
+            "legacy": legacy,
+        }
+
+    def _legacy_review_payload(self, ticket: Ticket, executor: User | None) -> dict | None:
+        if not ticket.resident_rating or not executor:
+            return None
+        _, resident_review = self._split_result_comment(ticket.result_comment)
+        if not resident_review:
+            return None
+        return {
+            "id": None,
+            "ticket_id": ticket.id,
+            "ticket_title": ticket.title,
+            "executor_id": executor.id,
+            "resident_id": ticket.author_id,
+            "rating": ticket.resident_rating,
+            "review_text": resident_review,
+            "created_at": ticket.closed_at,
+            "updated_at": ticket.closed_at,
+            "executor": self._executor_review_short(executor),
+            "legacy": True,
+        }
+
+    def _completed_executor_ids(self, ticket: Ticket) -> list[int]:
+        ids: list[int] = []
+        rows = (
+            self.db.query(TicketHistory)
+            .filter(TicketHistory.ticket_id == ticket.id)
+            .order_by(TicketHistory.created_at.asc(), TicketHistory.id.asc())
+            .all()
+        )
+        for history in rows:
+            user = history.user
+            if not user or user.role != UserRole.EXECUTOR:
+                continue
+            status = str(history.new_status or "").lower()
+            comment = str(history.comment or "").lower()
+            if status == TicketStatus.DONE.value or "отметил заявку выполненной" in comment:
+                if user.id not in ids:
+                    ids.append(user.id)
+        if ticket.executor_id and ticket.status in [TicketStatus.DONE, TicketStatus.CLOSED] and ticket.executor_id not in ids:
+            ids.append(ticket.executor_id)
+        return ids
+
+    def executor_completed_ticket(self, ticket: Ticket, executor_id: int) -> bool:
+        return executor_id in self._completed_executor_ids(ticket)
+
+    def _ensure_can_view_reviews(self, ticket: Ticket, current_user: User) -> None:
+        if current_user.role in [UserRole.ADMIN, UserRole.ADMIN_ASSISTANT, UserRole.DISPATCHER, UserRole.AUDITOR]:
+            return
+        if current_user.role == UserRole.RESIDENT and ticket.author_id == current_user.id:
+            return
+        raise HTTPException(status_code=403, detail="Недостаточно прав для просмотра отзывов по заявке")
+
+    def list_executor_reviews_for_ticket(self, ticket_id: int, current_user: User) -> list[dict]:
+        ticket = self._get_ticket_or_404(ticket_id)
+        self._ensure_can_view_reviews(ticket, current_user)
+        executor_ids = self._completed_executor_ids(ticket)
+        if not executor_ids:
+            return []
+
+        executors = {
+            user.id: user
+            for user in self.db.query(User).filter(User.id.in_(executor_ids)).all()
+        }
+        reviews = {
+            review.executor_id: review
+            for review in (
+                self.db.query(TicketExecutorReview)
+                .filter(TicketExecutorReview.ticket_id == ticket.id)
+                .all()
+            )
+        }
+
+        result = []
+        for executor_id in executor_ids:
+            executor = executors.get(executor_id)
+            if not executor:
+                continue
+            review = reviews.get(executor_id)
+            review_payload = self._review_payload(review) if review else None
+            if review_payload is None and ticket.executor_id == executor_id:
+                review_payload = self._legacy_review_payload(ticket, executor)
+            result.append({
+                "executor": self._executor_review_short(executor),
+                "review": review_payload,
+                "can_review": (
+                    current_user.role == UserRole.RESIDENT
+                    and ticket.author_id == current_user.id
+                    and ticket.status == TicketStatus.CLOSED
+                    and not ticket.is_external_request
+                    and review_payload is None
+                ),
+            })
+        return result
+
+    def list_reviews_for_executor(self, current_user: User) -> list[dict]:
+        if current_user.role != UserRole.EXECUTOR:
+            raise HTTPException(status_code=403, detail="Раздел отзывов доступен только исполнителю")
+
+        reviews = (
+            self.db.query(TicketExecutorReview)
+            .filter(TicketExecutorReview.executor_id == current_user.id)
+            .order_by(TicketExecutorReview.created_at.desc())
+            .all()
+        )
+        result = [self._review_payload(review) for review in reviews]
+        reviewed_ticket_ids = {review.ticket_id for review in reviews}
+
+        legacy_tickets = (
+            self.db.query(Ticket)
+            .filter(
+                Ticket.executor_id == current_user.id,
+                Ticket.resident_rating.isnot(None),
+                Ticket.id.notin_(reviewed_ticket_ids) if reviewed_ticket_ids else True,
+            )
+            .order_by(Ticket.closed_at.desc().nullslast(), Ticket.updated_at.desc())
+            .all()
+        )
+        for ticket in legacy_tickets:
+            legacy = self._legacy_review_payload(ticket, current_user)
+            if legacy:
+                result.append(legacy)
+
+        result.sort(key=lambda item: item.get("created_at") or datetime.min, reverse=True)
+        return result
+
+    def create_executor_review(self, ticket_id: int, payload: TicketExecutorReviewCreate, current_user: User) -> TicketExecutorReview:
+        ticket = self._get_ticket_or_404(ticket_id)
+        if current_user.role != UserRole.RESIDENT or ticket.author_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Оставить отзыв может только житель, создавший заявку")
+        if ticket.is_external_request:
+            raise HTTPException(status_code=400, detail="Для заявки, оформленной сотрудником, отзыв жителя не требуется")
+        if ticket.status != TicketStatus.CLOSED:
+            raise HTTPException(status_code=400, detail="Оценить исполнителей можно после принятия выполненной работы")
+
+        executor_ids = self._completed_executor_ids(ticket)
+        if payload.executor_id not in executor_ids:
+            raise HTTPException(status_code=400, detail="Этот исполнитель не завершал работу по выбранной заявке")
+
+        review_text = (payload.review_text or "").strip() or "Работа принята. Претензий нет."
+        ensure_clean_text(review_text)
+
+        review = (
+            self.db.query(TicketExecutorReview)
+            .filter(
+                TicketExecutorReview.ticket_id == ticket.id,
+                TicketExecutorReview.executor_id == payload.executor_id,
+                TicketExecutorReview.resident_id == current_user.id,
+            )
+            .first()
+        )
+        if review is not None:
+            raise HTTPException(status_code=409, detail="Отзыв об этом исполнителе уже оставлен и не может быть изменён")
+
+        review = TicketExecutorReview(
+            ticket_id=ticket.id,
+            executor_id=payload.executor_id,
+            resident_id=current_user.id,
+        )
+        self.db.add(review)
+
+        review.rating = payload.rating
+        review.review_text = review_text
+        review.updated_at = datetime.utcnow()
+
+        if ticket.executor_id == payload.executor_id:
+            executor_comment, _ = self._split_result_comment(ticket.result_comment)
+            ticket.result_comment = self._compose_result_comment(executor_comment, review_text)
+            ticket.resident_rating = payload.rating
+
+        self.db.flush()
+        self.db.refresh(review)
+        return review
+
     def _format_actor_name(self, user: User | None) -> str:
         if user is None:
             return "пользователь"
         return (getattr(user, "full_name", None) or getattr(user, "login", None) or "пользователь").strip()
+
+    def _format_actor_name_with_role(self, user: User | None) -> str:
+        if user is None:
+            return "пользователь"
+        role = getattr(user, "role", None)
+        role_value = role.value if hasattr(role, "value") else str(role or "")
+        role_label = {
+            "admin": "Администратор",
+            "admin_assistant": "Помощник администратора",
+            "dispatcher": "Диспетчер",
+            "executor": "Исполнитель",
+            "auditor": "Аудитор",
+            "resident": "Житель",
+        }.get(role_value, role_value)
+        name = self._format_actor_name(user)
+        return f"{name} ({role_label})" if role_label else name
 
     def _broadcast_ticket_update(self, ticket: Ticket, action: str = "updated", **extra) -> None:
         if ticket is None:
@@ -340,14 +581,13 @@ class TicketService:
                 priorities=list(dispatcher_allowed_priorities) if dispatcher_allowed_priorities else None,
             )
         elif user.role == UserRole.EXECUTOR:
-            tickets = self.ticket_repo.get_filtered(
+            tickets = self.ticket_repo.get_for_executor(
                 executor_id=user.id,
                 status=status,
                 created_from=created_from,
                 created_to=created_to,
                 limit=limit,
                 skip=skip,
-                overdue_hours=kwargs.get("overdue_hours"),
             )
         else:
             tickets = self.ticket_repo.get_for_resident(
@@ -384,7 +624,10 @@ class TicketService:
             return ticket
 
         if current_user.role == UserRole.EXECUTOR:
-            if ticket.executor_id != current_user.id:
+            if (
+                ticket.executor_id != current_user.id
+                and not self.executor_completed_ticket(ticket, current_user.id)
+            ):
                 raise HTTPException(status_code=403, detail="Not enough permissions")
             return ticket
 
@@ -408,6 +651,8 @@ class TicketService:
 
         if user.role == UserRole.RESIDENT:
             self._ensure_resident_not_banned(user)
+
+        self._ensure_executor_pool_exists()
 
         ensure_clean_text(payload.title, payload.description, payload.external_contact_phone)
 
@@ -478,7 +723,7 @@ class TicketService:
                 raise HTTPException(status_code=400, detail="Укажите телефон жителя")
             data["author_id"] = user.id
             data["is_external_request"] = True
-            data["external_contact_phone"] = str(data.get("external_contact_phone") or "").strip()
+            data["external_contact_phone"] = validate_contact_phone_value(data.get("external_contact_phone"), required=True)
             data["show_contact_phone"] = True
             if not data.get("apartment_id") and str(data.get("apartment") or "").strip():
                 apartment_obj = (
@@ -500,7 +745,7 @@ class TicketService:
             ticket.id,
             user_id=user.id,
             new_status=TicketStatus.CREATED.value,
-            comment=f"Заявка создана. Создал: {self._format_actor_name(user)}",
+            comment=f"Заявка создана. Создал: {self._format_actor_name_with_role(user)}",
         )
 
         self.db.commit()
@@ -834,13 +1079,6 @@ class TicketService:
                 ticket.result_comment = self._compose_result_comment(comment_text, resident_review)
                 ticket.done_at = datetime.utcnow()
                 history_comment = f"Исполнитель отметил заявку выполненной. Комментарий: {comment_text}"
-                if ticket.is_external_request:
-                    payload.status = TicketStatus.CLOSED
-                    ticket.closed_at = datetime.utcnow()
-                    history_comment = (
-                        f"Исполнитель отметил заявку выполненной. Заявка по обращению без профиля жителя закрыта автоматически. "
-                        f"Комментарий: {comment_text}"
-                    )
 
             else:
                 raise HTTPException(status_code=403, detail="Исполнитель не может установить этот статус")
@@ -851,8 +1089,21 @@ class TicketService:
             if ticket.is_external_request:
                 raise HTTPException(status_code=400, detail="Заявка оформлена диспетчером без профиля жителя и не требует принятия работы")
             review_text = (payload.comment or "").strip() or "Работа принята. Претензий нет."
+            if payload.resident_rating is None:
+                raise HTTPException(status_code=400, detail="Укажите оценку работы исполнителя")
             ticket.result_comment = self._compose_result_comment(executor_comment, review_text)
+            ticket.resident_rating = payload.resident_rating
             ticket.closed_at = datetime.utcnow()
+            if ticket.executor_id:
+                self.create_executor_review(
+                    ticket.id,
+                    TicketExecutorReviewCreate(
+                        executor_id=ticket.executor_id,
+                        rating=payload.resident_rating,
+                        review_text=review_text,
+                    ),
+                    current_user,
+                )
         elif payload.comment and current_user.role != UserRole.EXECUTOR:
             comment_text = payload.comment.strip()
             ticket.result_comment = comment_text
