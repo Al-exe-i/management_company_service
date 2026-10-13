@@ -1,0 +1,16 @@
+**
+!Dockerfile
+!requirements.txt
+!pyproject.toml
+!uv.lock
+!alembic.ini
+!app/
+!app/**
+!alembic/
+!alembic/**
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.env*
+**/*firebase*.json
+**/*service-account*.json

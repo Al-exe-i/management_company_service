@@ -1,18 +1,128 @@
-version: '3.8'
+name: management-company-test
+
+x-backend: &backend
+  image: management-company-backend:local
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment:
+    APP_TITLE: ${APP_TITLE:-UK App}
+    POSTGRES_USER: ${POSTGRES_USER:-uk_admin}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .docker.env}
+    POSTGRES_SERVER: db
+    POSTGRES_PORT: "5432"
+    POSTGRES_DB: ${POSTGRES_DB:-uk_db}
+    SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .docker.env}
+    ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+    CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+    TZ: Europe/Moscow
+  init: true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
   db:
-    image: postgres:15
-    container_name: uk_postgres
-    restart: always
+    image: postgres:15-bookworm
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: uk_admin
-      POSTGRES_PASSWORD: uk_password
-      POSTGRES_DB: uk_db
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-uk_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .docker.env}
+      POSTGRES_DB: ${POSTGRES_DB:-uk_db}
+      TZ: UTC
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  migrate:
+    <<: *backend
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  backend:
+    <<: *backend
+    restart: unless-stopped
+    volumes:
+      - uploads:/app/static
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=6)"]
+      interval: 10s
+      timeout: 8s
+      retries: 6
+      start_period: 15s
+
+  frontend:
+    image: management-company-frontend:local
+    build:
+      context: ${FRONTEND_CONTEXT:-../uk_frontend}
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      NITRO_HOST: 0.0.0.0
+      NITRO_PORT: "3000"
+      NUXT_API_INTERNAL_BASE: http://backend:8000/api/v1
+      NUXT_PUBLIC_API_BASE: /api/v1
+      NUXT_PUBLIC_APP_NAME: ${NUXT_PUBLIC_APP_NAME:-UK WEB}
+      TZ: Europe/Moscow
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  gateway:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8080}:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   postgres_data:
+  uploads:

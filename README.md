@@ -1,6 +1,6 @@
 # Management Company Service
 
-![Python](https://img.shields.io/badge/Python-3.10-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Database-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
 ![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-ORM-D71F00?style=for-the-badge)
@@ -102,18 +102,25 @@ uk_backend/
 │   └── versions/         # миграции базы данных
 ├── static/               # загружаемые файлы и изображения
 ├── alembic.ini           # настройки Alembic
-└── docker-compose.yml    # конфигурация PostgreSQL
+├── pyproject.toml        # зависимости и настройки uv
+├── uv.lock               # зафиксированные версии зависимостей
+└── docker-compose.yml    # PostgreSQL, миграции, backend, web и Nginx
 ```
 
 ---
 
 ## Запуск backend
 
-Перед запуском необходимо настроить переменные окружения и подключение к PostgreSQL.
+Зависимости устанавливаются через uv 0.13 или новее. Python 3.12 указан в `.python-version`; прежний каталог `venv` можно сохранить, uv использует отдельный `.venv`.
+
+В PyCharm выберите интерпретатор `uk_backend/.venv/Scripts/python.exe` на Windows или `uk_backend/.venv/bin/python` на Linux. Для запуска из терминала используйте команды `uv run` ниже.
+
+Создайте `.env` по примеру `.env.example` и настройте подключение к PostgreSQL. Существующий `.env` заменять не требуется.
 
 ```powershell
-python -m alembic upgrade head
-python -m uvicorn app.main:app --reload
+uv sync --locked
+uv run --locked python -m alembic upgrade head
+uv run --locked python -m uvicorn app.main:app --reload
 ```
 
 После запуска API доступно по адресу:
@@ -127,3 +134,33 @@ http://127.0.0.1:8000
 ```text
 http://127.0.0.1:8000/docs
 ```
+
+## Асинхронная работа с БД
+
+Приложение использует `AsyncEngine`, `AsyncSession` и драйвер `asyncpg`. Обработчики API, авторизация, проверка готовности и проверка пользователя WebSocket выполняются асинхронно. Существующие сервисы и репозитории используют ORM-интерфейс `Session` внутри `AsyncSession.run_sync`; операции драйвера при этом передают управление event loop. Схемы ответов формируются внутри этого контекста, включая загрузку связей ORM.
+
+Отправка Firebase push и bcrypt выполняются вне event loop. WebSocket освобождает соединение с PostgreSQL сразу после проверки пользователя. Backend запускается одним процессом, поскольку обмен WebSocket-событиями пока хранится в памяти этого процесса.
+
+Подход `run_sync` описан в [документации SQLAlchemy](https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html#running-synchronous-methods-and-functions-under-asyncio).
+
+## Проверки
+
+```powershell
+uv run --locked python -m unittest discover -s tests -v
+```
+
+Интеграционные проверки запускаются только при `RUN_DB_TESTS=1` и имени отдельной базы, оканчивающемся на `_test`. Сначала примените к ней миграции. Проверки создают тестовых пользователей, дома и заявки, поэтому указывать рабочую базу нельзя. Проверяются структура таблиц, асинхронное выполнение SQL, доступ по ролям и цикл заявки с жалобой, повторным назначением и отзывами.
+
+## Обновление зависимостей
+
+```powershell
+uv add имя-пакета
+uv sync --locked
+uv export --locked --no-dev --no-emit-project --no-hashes --no-header --no-annotate --output-file requirements.txt
+```
+
+Основной источник зависимостей — `pyproject.toml` и `uv.lock`; `requirements.txt` экспортируется для совместимости. Docker использует `uv sync --locked --no-dev`. Интеграция соответствует [рекомендациям uv](https://docs.astral.sh/uv/guides/integration/docker/).
+
+## Тестовый сервер
+
+Инструкции по сборке, первому запуску, Firebase, обновлениям и резервному копированию: [DEPLOYMENT.md](DEPLOYMENT.md).

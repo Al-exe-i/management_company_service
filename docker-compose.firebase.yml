@@ -1,0 +1,10 @@
+services:
+  backend:
+    environment:
+      FCM_SERVICE_ACCOUNT_FILE: /run/secrets/firebase_service_account
+    secrets:
+      - firebase_service_account
+
+secrets:
+  firebase_service_account:
+    file: ${FCM_SERVICE_ACCOUNT_HOST_FILE:-./.secrets/firebase-service-account.json}
