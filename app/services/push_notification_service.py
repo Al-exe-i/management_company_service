@@ -1,13 +1,33 @@
+import asyncio
 import logging
 import os
 from datetime import datetime
 from typing import Iterable
+from threading import Lock
 
 from sqlalchemy.orm import Session
+from sqlalchemy import update
 
 from app.models.push_device_token import PushDeviceToken
 
 logger = logging.getLogger(__name__)
+_delivery_tasks: set[asyncio.Task] = set()
+_firebase_lock = Lock()
+
+
+def schedule_push_deliveries(deliveries: list) -> None:
+    for tokens, payload in deliveries:
+        task = asyncio.create_task(PushNotificationService._deliver_async(tokens, payload))
+        _delivery_tasks.add(task)
+        task.add_done_callback(_delivery_tasks.discard)
+
+
+async def finish_push_deliveries() -> None:
+    if _delivery_tasks:
+        try:
+            await asyncio.wait_for(asyncio.gather(*list(_delivery_tasks), return_exceptions=True), timeout=15)
+        except TimeoutError:
+            logger.warning("Pending push delivery timed out during shutdown")
 
 
 class PushNotificationService:
@@ -86,10 +106,6 @@ class PushNotificationService:
         if not target_ids:
             return
 
-        messaging = self._get_firebase_messaging()
-        if messaging is None:
-            return
-
         tokens = (
             self.db.query(PushDeviceToken)
             .filter(PushDeviceToken.user_id.in_(target_ids), PushDeviceToken.is_active.is_(True))
@@ -106,11 +122,29 @@ class PushNotificationService:
         payload_data.setdefault("title", title or "")
         payload_data.setdefault("message", message or "")
 
-        dirty = False
-        for token_obj in tokens:
+        token_data = [(obj.id, obj.token) for obj in tokens]
+        if self.db.get_bind().dialect.is_async:
+            self.db.info.setdefault("pending_push_deliveries", []).append((token_data, payload_data))
+            return
+        invalid_ids = self._send_payload(token_data, payload_data)
+        if invalid_ids:
+            self.db.query(PushDeviceToken).filter(PushDeviceToken.id.in_(invalid_ids)).update(
+                {PushDeviceToken.is_active: False, PushDeviceToken.updated_at: datetime.utcnow()},
+                synchronize_session=False,
+            )
+            self.db.commit()
+
+    @staticmethod
+    def _send_payload(tokens: list[tuple[int, str]], payload_data: dict) -> list[int]:
+        with _firebase_lock:
+            messaging = PushNotificationService._get_firebase_messaging()
+        if messaging is None:
+            return []
+        invalid_ids = []
+        for token_id, token in tokens:
             try:
                 firebase_message = messaging.Message(
-                    token=token_obj.token,
+                    token=token,
                     data=payload_data,
                     android=messaging.AndroidConfig(
                         priority="high",
@@ -118,14 +152,28 @@ class PushNotificationService:
                 )
                 messaging.send(firebase_message)
             except Exception as exc:
-                if self._looks_like_invalid_token(exc):
-                    token_obj.is_active = False
-                    token_obj.updated_at = datetime.utcnow()
-                    dirty = True
+                if PushNotificationService._looks_like_invalid_token(exc):
+                    invalid_ids.append(token_id)
                 logger.warning("FCM push delivery failed: %s", exc)
 
-        if dirty:
-            self.db.commit()
+        return invalid_ids
+
+    @staticmethod
+    async def _deliver_async(tokens: list[tuple[int, str]], payload: dict) -> None:
+        from app.db.session import SessionLocal
+
+        try:
+            invalid_ids = await asyncio.to_thread(PushNotificationService._send_payload, tokens, payload)
+            if invalid_ids:
+                async with SessionLocal() as db:
+                    await db.execute(
+                        update(PushDeviceToken).where(PushDeviceToken.id.in_(invalid_ids)).values(
+                            is_active=False, updated_at=datetime.utcnow(),
+                        )
+                    )
+                    await db.commit()
+        except Exception:
+            logger.exception("Background push delivery failed")
 
     @staticmethod
     def _looks_like_invalid_token(exc: Exception) -> bool:
@@ -163,7 +211,7 @@ class PushNotificationService:
         try:
             if not firebase_admin._apps:
                 cred = credentials.Certificate(service_account_file)
-                firebase_admin.initialize_app(cred)
+                firebase_admin.initialize_app(cred, options={"httpTimeout": 10})
             return messaging
         except Exception as exc:
             logger.warning("Firebase initialization failed, push notifications are skipped: %s", exc)

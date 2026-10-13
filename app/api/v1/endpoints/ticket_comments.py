@@ -1,3 +1,6 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.operations import run_db
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -10,21 +13,26 @@ router = APIRouter()
 
 
 @router.get("/{ticket_id}/comments", response_model=list[TicketCommentResponse])
-def list_ticket_comments(
+async def list_ticket_comments(
     ticket_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    service = TicketCommentService(db)
-    return service.list_comments(ticket_id, current_user)
+    def operation(db: Session):
+        service = TicketCommentService(db)
+        return service.list_comments(ticket_id, current_user)
+
+    return await run_db(db, operation, list[TicketCommentResponse])
 
 
 @router.post("/{ticket_id}/comments", response_model=TicketCommentResponse)
-def create_ticket_comment(
+async def create_ticket_comment(
     ticket_id: int,
     data: TicketCommentCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    service = TicketCommentService(db)
-    return service.create_comment(ticket_id, data.message, data.is_internal, current_user)
+    def operation(db: Session):
+        service = TicketCommentService(db)
+        return service.create_comment(ticket_id, data.message, data.is_internal, current_user)
+    return await run_db(db, operation, TicketCommentResponse)

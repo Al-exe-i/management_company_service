@@ -2,11 +2,11 @@ from urllib.parse import unquote
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from jose import JWTError, jwt
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.repositories.user_repository import UserRepository
-from app.schemas.token import TokenData
+from app.models.user import User
 from app.services.live_update_hub import live_update_hub
 
 router = APIRouter()
@@ -28,7 +28,6 @@ async def websocket_updates(websocket: WebSocket):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    db = SessionLocal()
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         user_id = payload.get("sub")
@@ -36,19 +35,18 @@ async def websocket_updates(websocket: WebSocket):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
-        token_data = TokenData(user_id=user_id)
-        user = UserRepository(db).get_by_id(int(token_data.user_id))
-        if user is None:
+        async with SessionLocal() as db:
+            existing_user_id = await db.scalar(select(User.id).where(User.id == int(user_id)))
+        if existing_user_id is None:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
 
         await live_update_hub.connect(websocket)
         while True:
             await websocket.receive_text()
-    except (JWTError, ValueError):
+    except (JWTError, ValueError, TypeError):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
     except WebSocketDisconnect:
         live_update_hub.disconnect(websocket)
     finally:
         live_update_hub.disconnect(websocket)
-        db.close()

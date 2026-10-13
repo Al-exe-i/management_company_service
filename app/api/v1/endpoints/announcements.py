@@ -1,3 +1,6 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.operations import run_db
+
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -36,84 +39,93 @@ def _announcement_target_resident_ids(
 
 
 @router.post("/", response_model=AnnouncementResponse)
-def create_announcement(
+async def create_announcement(
     announcement_in: AnnouncementCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not can_manage_announcements(current_user):
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+    def operation(db: Session):
+        if not can_manage_announcements(current_user):
+            raise HTTPException(status_code=403, detail="Not enough permissions")
 
-    data = announcement_in.model_dump()
-    target_house_id = data.get("target_house_id")
-    target_entrance_id = data.get("target_entrance_id")
+        data = announcement_in.model_dump()
+        target_house_id = data.get("target_house_id")
+        target_entrance_id = data.get("target_entrance_id")
 
-    if target_entrance_id is not None:
-        if target_house_id is None:
-            raise HTTPException(status_code=400, detail="target_house_id is required when target_entrance_id is set")
+        if target_entrance_id is not None:
+            if target_house_id is None:
+                raise HTTPException(status_code=400, detail="target_house_id is required when target_entrance_id is set")
 
-        entrance = db.query(HouseEntrance).filter(HouseEntrance.id == target_entrance_id).first()
-        if not entrance:
-            raise HTTPException(status_code=404, detail="Entrance not found")
-        if entrance.house_id != target_house_id:
-            raise HTTPException(status_code=400, detail="Entrance does not belong to selected house")
+            entrance = db.query(HouseEntrance).filter(HouseEntrance.id == target_entrance_id).first()
+            if not entrance:
+                raise HTTPException(status_code=404, detail="Entrance not found")
+            if entrance.house_id != target_house_id:
+                raise HTTPException(status_code=400, detail="Entrance does not belong to selected house")
 
-    data["author_id"] = current_user.id
-    announcement = AnnouncementRepository(db).create(data)
-    db.add(AnnouncementHistory(
-        announcement_id=announcement.id,
-        actor_id=current_user.id,
-        action="created",
-        new_value="Создано объявление",
-    ))
-    db.commit()
-    db.refresh(announcement)
-    target_ids = _announcement_target_resident_ids(db, target_house_id, target_entrance_id)
-    NotificationService(db).notify_many(
-        user_ids=target_ids,
-        title="Новое объявление",
-        message=announcement.title,
-        notif_type="announcement",
-        announcement_id=announcement.id,
-    )
-    return announcement
+        data["author_id"] = current_user.id
+        announcement = AnnouncementRepository(db).create(data)
+        db.add(AnnouncementHistory(
+            announcement_id=announcement.id,
+            actor_id=current_user.id,
+            action="created",
+            new_value="Создано объявление",
+        ))
+        db.commit()
+        db.refresh(announcement)
+        target_ids = _announcement_target_resident_ids(db, target_house_id, target_entrance_id)
+        NotificationService(db).notify_many(
+            user_ids=target_ids,
+            title="Новое объявление",
+            message=announcement.title,
+            notif_type="announcement",
+            announcement_id=announcement.id,
+        )
+        return announcement
+
+    return await run_db(db, operation, AnnouncementResponse)
 
 
 @router.get("/", response_model=List[AnnouncementResponse])
-def read_announcements(
-    db: Session = Depends(get_db),
+async def read_announcements(
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return AnnouncementRepository(db).get_visible_for_user(current_user)
+    def operation(db: Session):
+        return AnnouncementRepository(db).get_visible_for_user(current_user)
+
+    return await run_db(db, operation, List[AnnouncementResponse])
 
 
 @router.patch("/{id}", response_model=AnnouncementResponse)
-def update_announcement(
+async def update_announcement(
     id: int,
     is_active: bool,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not can_manage_announcements(current_user):
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+    def operation(db: Session):
+        if not can_manage_announcements(current_user):
+            raise HTTPException(status_code=403, detail="Not enough permissions")
 
-    ann = db.query(Announcement).filter(Announcement.id == id).first()
-    if not ann:
-        raise HTTPException(status_code=404, detail="Announcement not found")
-    if ann.author_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Only announcement author can archive it")
+        ann = db.query(Announcement).filter(Announcement.id == id).first()
+        if not ann:
+            raise HTTPException(status_code=404, detail="Announcement not found")
+        if ann.author_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Only announcement author can archive it")
 
-    old_value = "active" if ann.is_active else "archived"
-    new_value = "active" if is_active else "archived"
-    ann.is_active = is_active
-    if old_value != new_value:
-        db.add(AnnouncementHistory(
-            announcement_id=ann.id,
-            actor_id=current_user.id,
-            action="restored" if is_active else "archived",
-            old_value=old_value,
-            new_value=new_value,
-        ))
-    db.commit()
-    db.refresh(ann)
-    return ann
+        old_value = "active" if ann.is_active else "archived"
+        new_value = "active" if is_active else "archived"
+        ann.is_active = is_active
+        if old_value != new_value:
+            db.add(AnnouncementHistory(
+                announcement_id=ann.id,
+                actor_id=current_user.id,
+                action="restored" if is_active else "archived",
+                old_value=old_value,
+                new_value=new_value,
+            ))
+        db.commit()
+        db.refresh(ann)
+        return ann
+
+    return await run_db(db, operation, AnnouncementResponse)

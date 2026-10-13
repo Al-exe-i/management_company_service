@@ -1,3 +1,6 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.operations import run_db
+
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -32,185 +35,233 @@ def _ensure_house_manager(current_user: User):
 
 
 @router.post("/", response_model=HouseResponse)
-def create_house(
+async def create_house(
     house_in: HouseCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    _ensure_house_manager(current_user)
+    def operation(db: Session):
+        _ensure_house_manager(current_user)
 
-    service = HouseService(db)
-    return service.create_house(house_in)
+        service = HouseService(db)
+        return service.create_house(house_in)
+
+    return await run_db(db, operation, HouseResponse)
 
 
 @router.post("/with-structure", response_model=HouseStructureResponse)
-def create_house_with_structure(
+async def create_house_with_structure(
     payload: HouseWithStructureCreateRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    _ensure_house_manager(current_user)
+    def operation(db: Session):
+        _ensure_house_manager(current_user)
 
-    service = HouseService(db)
-    return service.create_house_with_structure(payload)
+        service = HouseService(db)
+        return service.create_house_with_structure(payload)
+
+    return await run_db(db, operation, HouseStructureResponse)
 
 
 @router.get("/", response_model=List[HouseResponse])
-def read_houses(db: Session = Depends(get_db)):
-    service = HouseService(db)
-    return service.get_all_houses()
+async def read_houses(db: AsyncSession = Depends(get_db)):
+    def operation(db: Session):
+        service = HouseService(db)
+        return service.get_all_houses()
+
+    return await run_db(db, operation, List[HouseResponse])
 
 
 @router.get("/{house_id}/structure", response_model=HouseStructureResponse)
-def read_house_structure(
+async def read_house_structure(
     house_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    service = HouseService(db)
-    return service.get_house_structure(house_id)
+    def operation(db: Session):
+        service = HouseService(db)
+        return service.get_house_structure(house_id)
+
+    return await run_db(db, operation, HouseStructureResponse)
 
 
 @router.put("/{house_id}", response_model=HouseResponse)
-def update_house(
+async def update_house(
     house_id: int,
     house_in: HouseUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    _ensure_house_manager(current_user)
+    def operation(db: Session):
+        _ensure_house_manager(current_user)
 
-    service = HouseService(db)
-    return service.update_house(house_id, house_in)
+        service = HouseService(db)
+        return service.update_house(house_id, house_in)
+
+    return await run_db(db, operation, HouseResponse)
 
 
 @router.delete("/{house_id}")
-def delete_house(
+async def delete_house(
     house_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="Удалять дома может только администратор")
+    def operation(db: Session):
+        if current_user.role != UserRole.ADMIN:
+            raise HTTPException(status_code=403, detail="Удалять дома может только администратор")
 
-    service = HouseService(db)
-    return service.delete_house(house_id)
+        service = HouseService(db)
+        return service.delete_house(house_id)
+
+    return await run_db(db, operation, None)
 
 
 @router.get("/{house_id}/entrances", response_model=List[HouseEntranceResponse])
-def read_house_entrances(
+async def read_house_entrances(
     house_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    service = HouseService(db)
-    return service.list_entrances(house_id)
+    def operation(db: Session):
+        service = HouseService(db)
+        return service.list_entrances(house_id)
+
+    return await run_db(db, operation, List[HouseEntranceResponse])
 
 
 @router.post("/{house_id}/entrances", response_model=HouseEntranceResponse)
-def create_house_entrance(
+async def create_house_entrance(
     house_id: int,
     payload: HouseEntranceCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    _ensure_house_manager(current_user)
+    def operation(db: Session):
+        _ensure_house_manager(current_user)
 
-    service = HouseService(db)
-    return service.create_entrance(house_id, payload)
+        service = HouseService(db)
+        return service.create_entrance(house_id, payload)
+
+    return await run_db(db, operation, HouseEntranceResponse)
 
 
 @router.put("/entrances/{entrance_id}", response_model=HouseEntranceResponse)
-def update_house_entrance(
+async def update_house_entrance(
     entrance_id: int,
     payload: HouseEntranceUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    _ensure_house_manager(current_user)
+    def operation(db: Session):
+        _ensure_house_manager(current_user)
 
-    service = HouseService(db)
-    return service.update_entrance(entrance_id, payload)
+        service = HouseService(db)
+        return service.update_entrance(entrance_id, payload)
+
+    return await run_db(db, operation, HouseEntranceResponse)
 
 
 @router.delete("/entrances/{entrance_id}")
-def delete_house_entrance(
+async def delete_house_entrance(
     entrance_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    _ensure_house_manager(current_user)
+    def operation(db: Session):
+        _ensure_house_manager(current_user)
 
-    service = HouseService(db)
-    return service.delete_entrance(entrance_id)
+        service = HouseService(db)
+        return service.delete_entrance(entrance_id)
+
+    return await run_db(db, operation, None)
 
 
 @router.get("/{house_id}/apartments", response_model=List[ApartmentResponse])
-def read_house_apartments(
+async def read_house_apartments(
     house_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    service = HouseService(db)
-    return service.list_apartments_for_house(house_id)
+    def operation(db: Session):
+        service = HouseService(db)
+        return service.list_apartments_for_house(house_id)
+
+    return await run_db(db, operation, List[ApartmentResponse])
 
 
 @router.get("/entrances/{entrance_id}/apartments", response_model=List[ApartmentResponse])
-def read_entrance_apartments(
+async def read_entrance_apartments(
     entrance_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    service = HouseService(db)
-    return service.list_apartments_for_entrance(entrance_id)
+    def operation(db: Session):
+        service = HouseService(db)
+        return service.list_apartments_for_entrance(entrance_id)
+
+    return await run_db(db, operation, List[ApartmentResponse])
 
 
 @router.post("/entrances/{entrance_id}/apartments", response_model=ApartmentResponse)
-def create_entrance_apartment(
+async def create_entrance_apartment(
     entrance_id: int,
     payload: ApartmentCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    _ensure_house_manager(current_user)
+    def operation(db: Session):
+        _ensure_house_manager(current_user)
 
-    service = HouseService(db)
-    return service.create_apartment(entrance_id, payload)
+        service = HouseService(db)
+        return service.create_apartment(entrance_id, payload)
+
+    return await run_db(db, operation, ApartmentResponse)
 
 
 @router.post("/entrances/{entrance_id}/generate-apartments", response_model=List[ApartmentResponse])
-def generate_entrance_apartments(
+async def generate_entrance_apartments(
     entrance_id: int,
     payload: ApartmentGenerateRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    _ensure_house_manager(current_user)
+    def operation(db: Session):
+        _ensure_house_manager(current_user)
 
-    service = HouseService(db)
-    return service.generate_apartments(entrance_id, payload)
+        service = HouseService(db)
+        return service.generate_apartments(entrance_id, payload)
+
+    return await run_db(db, operation, List[ApartmentResponse])
 
 
 @router.put("/apartments/{apartment_id}", response_model=ApartmentResponse)
-def update_apartment(
+async def update_apartment(
     apartment_id: int,
     payload: ApartmentUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    _ensure_house_manager(current_user)
+    def operation(db: Session):
+        _ensure_house_manager(current_user)
 
-    service = HouseService(db)
-    return service.update_apartment(apartment_id, payload)
+        service = HouseService(db)
+        return service.update_apartment(apartment_id, payload)
+
+    return await run_db(db, operation, ApartmentResponse)
 
 
 @router.delete("/apartments/{apartment_id}")
-def delete_apartment(
+async def delete_apartment(
     apartment_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    _ensure_house_manager(current_user)
+    def operation(db: Session):
+        _ensure_house_manager(current_user)
 
-    service = HouseService(db)
-    return service.delete_apartment(apartment_id)
+        service = HouseService(db)
+        return service.delete_apartment(apartment_id)
+
+    return await run_db(db, operation, None)

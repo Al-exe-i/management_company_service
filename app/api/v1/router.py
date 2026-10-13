@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user, get_db
+from app.db.operations import run_db
 from app.api.v1.endpoints import (
     analytics,
     announcements,
@@ -61,14 +63,16 @@ router.include_router(settings.router, prefix="/settings", tags=["settings"])
     response_model=list[ExecutorRecommendationResponse],
     tags=["executor-recommendations"],
 )
-def recommend_executors_by_ticket(
+async def recommend_executors_by_ticket(
     ticket_id: int,
     top: int = Query(10, ge=1, le=100),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if current_user.role not in [UserRole.ADMIN, UserRole.DISPATCHER, UserRole.AUDITOR]:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+    def operation(db: Session):
+        if current_user.role not in [UserRole.ADMIN, UserRole.DISPATCHER, UserRole.AUDITOR]:
+            raise HTTPException(status_code=403, detail="Not enough permissions")
+        service = ExecutorService(db)
+        return service.recommend_for_ticket(ticket_id=ticket_id, top=top)
 
-    service = ExecutorService(db)
-    return service.recommend_for_ticket(ticket_id=ticket_id, top=top)
+    return await run_db(db, operation, list[ExecutorRecommendationResponse])

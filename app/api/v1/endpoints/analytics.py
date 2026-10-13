@@ -1,3 +1,6 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.operations import run_db
+
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,22 +21,25 @@ def _ensure_staff(current_user: User):
 
 
 @router.get("/tickets/overview", response_model=TicketAnalyticsOverviewResponse)
-def get_ticket_overview(
+async def get_ticket_overview(
     house_id: int | None = None,
     category_id: int | None = None,
     place_category_id: int | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    _ensure_staff(current_user)
+    def operation(db: Session):
+        _ensure_staff(current_user)
 
-    service = AnalyticsService(db)
-    return service.get_ticket_overview(
-        house_id=house_id,
-        category_id=category_id,
-        place_category_id=place_category_id,
-        date_from=date_from,
-        date_to=date_to
-    )
+        service = AnalyticsService(db)
+        return service.get_ticket_overview(
+            house_id=house_id,
+            category_id=category_id,
+            place_category_id=place_category_id,
+            date_from=date_from,
+            date_to=date_to
+        )
+
+    return await run_db(db, operation, TicketAnalyticsOverviewResponse)

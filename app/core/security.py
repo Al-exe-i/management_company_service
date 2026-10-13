@@ -1,8 +1,16 @@
+import asyncio
 import bcrypt
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from jose import jwt
 from app.core.config import settings
+from sqlalchemy.util.concurrency import await_only, in_greenlet
+
+
+def _bcrypt_call(function, *args):
+    if in_greenlet():
+        return await_only(asyncio.to_thread(function, *args))
+    return function(*args)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -14,7 +22,10 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     password_byte_enc = plain_password.encode('utf-8')
     hashed_password_byte_enc = hashed_password.encode('utf-8')
 
-    return bcrypt.checkpw(password=password_byte_enc, hashed_password=hashed_password_byte_enc)
+    try:
+        return _bcrypt_call(bcrypt.checkpw, password_byte_enc, hashed_password_byte_enc)
+    except ValueError:
+        return False
 
 
 def get_password_hash(password: str) -> str:
@@ -24,7 +35,7 @@ def get_password_hash(password: str) -> str:
     """
     pwd_bytes = password.encode('utf-8')
     salt = bcrypt.gensalt()
-    hashed_bytes = bcrypt.hashpw(password=pwd_bytes, salt=salt)
+    hashed_bytes = _bcrypt_call(bcrypt.hashpw, pwd_bytes, salt)
 
     return hashed_bytes.decode('utf-8')
 

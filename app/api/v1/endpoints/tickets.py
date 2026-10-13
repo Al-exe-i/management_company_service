@@ -1,3 +1,6 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.operations import run_db
+
 from fastapi import APIRouter, Body, Depends, HTTPException, File, UploadFile
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
@@ -75,20 +78,23 @@ def _ticket_responses(tickets, current_user: User) -> list[TicketResponse]:
 
 
 @router.post("/", response_model=TicketResponse)
-def create_ticket(
+async def create_ticket(
         ticket_in: TicketCreate,
-        db: Session = Depends(get_db),
+        db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    if current_user.role == UserRole.AUDITOR:
-        raise HTTPException(status_code=403, detail="Auditors cannot create tickets")
+    def operation(db: Session):
+        if current_user.role == UserRole.AUDITOR:
+            raise HTTPException(status_code=403, detail="Auditors cannot create tickets")
 
-    service = TicketService(db)
-    return _ticket_response(service.create_ticket(ticket_in, user=current_user), current_user)
+        service = TicketService(db)
+        return _ticket_response(service.create_ticket(ticket_in, user=current_user), current_user)
+
+    return await run_db(db, operation, TicketResponse)
 
 
 @router.get("/", response_model=List[TicketResponse])
-def read_tickets(
+async def read_tickets(
         status: TicketStatus | None = None,
         house_id: int | None = None,
         executor_id: int | None = None,
@@ -98,172 +104,205 @@ def read_tickets(
         priority: TicketPriority | None = None,
         limit: int = 100,
         skip: int = 0,
-        db: Session = Depends(get_db),
+        db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    service = TicketService(db)
-    tickets = service.get_tickets(
-        user=current_user,
-        status=status,
-        house_id=house_id,
-        executor_id=executor_id,
-        created_from=created_from,
-        created_to=created_to,
-        overdue_hours=overdue_hours,
-        priority=priority,
-        limit=limit,
-        skip=skip,
-    )
-    return _ticket_responses(tickets, current_user)
+    def operation(db: Session):
+        service = TicketService(db)
+        tickets = service.get_tickets(
+            user=current_user,
+            status=status,
+            house_id=house_id,
+            executor_id=executor_id,
+            created_from=created_from,
+            created_to=created_to,
+            overdue_hours=overdue_hours,
+            priority=priority,
+            limit=limit,
+            skip=skip,
+        )
+        return _ticket_responses(tickets, current_user)
+
+    return await run_db(db, operation, List[TicketResponse])
 
 
 @router.patch("/{ticket_id}/assign", response_model=TicketResponse)
-def assign_ticket(
+async def assign_ticket(
         ticket_id: int,
         assign_data: TicketAssign,
-        db: Session = Depends(get_db),
+        db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    service = TicketService(db)
-    return _ticket_response(service.assign_executor(ticket_id, assign_data, current_user), current_user)
+    def operation(db: Session):
+        service = TicketService(db)
+        return _ticket_response(service.assign_executor(ticket_id, assign_data, current_user), current_user)
+
+    return await run_db(db, operation, TicketResponse)
 
 
 @router.post("/{ticket_id}/photos", response_model=TicketFileResponse)
-def upload_ticket_photo(
+async def upload_ticket_photo(
         ticket_id: int,
         file: UploadFile = File(...),
         kind: str | None = None,
-        db: Session = Depends(get_db),
+        db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    service = TicketService(db)
-    return service.upload_file(ticket_id, file, current_user, kind=kind)
+    def operation(db: Session):
+        service = TicketService(db)
+        return service.upload_file(ticket_id, file, current_user, kind=kind)
+
+    return await run_db(db, operation, TicketFileResponse)
 
 
 @router.delete("/photos/{file_id}")
-def delete_ticket_photo(
+async def delete_ticket_photo(
         file_id: int,
-        db: Session = Depends(get_db),
+        db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    service = TicketService(db)
-    return service.delete_file(file_id, current_user)
+    def operation(db: Session):
+        service = TicketService(db)
+        return service.delete_file(file_id, current_user)
+
+    return await run_db(db, operation, None)
 
 
 @router.post("/{ticket_id}/cancel")
-def cancel_ticket(
+async def cancel_ticket(
     ticket_id: int,
     payload: TicketCancelRequest | None = Body(default=None),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    service = TicketService(db)
-    return service.cancel_ticket(ticket_id, current_user, payload)
+    def operation(db: Session):
+        service = TicketService(db)
+        return service.cancel_ticket(ticket_id, current_user, payload)
+
+    return await run_db(db, operation, None)
 
 
 @router.get("/{ticket_id}", response_model=TicketResponse)
-def read_ticket(
+async def read_ticket(
     ticket_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    service = TicketService(db)
-    ticket = service.get_ticket_by_id(ticket_id, current_user)
-    if current_user.role in [UserRole.ADMIN, UserRole.ADMIN_ASSISTANT, UserRole.DISPATCHER]:
-        NotificationService(db).mark_ticket_created_read_for_staff(ticket_id)
-    return _ticket_response(ticket, current_user)
+    def operation(db: Session):
+        service = TicketService(db)
+        ticket = service.get_ticket_by_id(ticket_id, current_user)
+        if current_user.role in [UserRole.ADMIN, UserRole.ADMIN_ASSISTANT, UserRole.DISPATCHER]:
+            NotificationService(db).mark_ticket_created_read_for_staff(ticket_id)
+        return _ticket_response(ticket, current_user)
+
+    return await run_db(db, operation, TicketResponse)
 
 
 @router.patch("/{ticket_id}/status", response_model=TicketResponse)
-def update_ticket_status(
+async def update_ticket_status(
     ticket_id: int,
     status_data: TicketUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    service = TicketService(db)
-    return _ticket_response(service.update_status(ticket_id, status_data, current_user), current_user)
+    def operation(db: Session):
+        service = TicketService(db)
+        return _ticket_response(service.update_status(ticket_id, status_data, current_user), current_user)
+
+    return await run_db(db, operation, TicketResponse)
 
 
 @router.get("/{ticket_id}/history", response_model=List[HistoryResponse])
-def read_ticket_history(
+async def read_ticket_history(
         ticket_id: int,
-        db: Session = Depends(get_db),
+        db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    service = TicketService(db)
-    ticket = service.get_ticket_by_id(ticket_id, current_user)
+    def operation(db: Session):
+        service = TicketService(db)
+        ticket = service.get_ticket_by_id(ticket_id, current_user)
 
-    if current_user.role == UserRole.RESIDENT and ticket.author_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Only ticket author can view history")
+        if current_user.role == UserRole.RESIDENT and ticket.author_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Only ticket author can view history")
 
-    query = (
-        db.query(TicketHistory)
-        .options(joinedload(TicketHistory.user))
-        .filter(TicketHistory.ticket_id == ticket_id)
-    )
-
-    if current_user.role == UserRole.EXECUTOR:
-        query = query.filter(
-            or_(
-                TicketHistory.user_id == current_user.id,
-                and_(
-                    TicketHistory.new_status == TicketStatus.CREATED.value,
-                    TicketHistory.comment.ilike("Заявка создана%"),
-                ),
-            )
+        query = (
+            db.query(TicketHistory)
+            .options(joinedload(TicketHistory.user))
+            .filter(TicketHistory.ticket_id == ticket_id)
         )
 
-    history = query.order_by(TicketHistory.created_at.desc()).all()
+        if current_user.role == UserRole.EXECUTOR:
+            query = query.filter(
+                or_(
+                    TicketHistory.user_id == current_user.id,
+                    and_(
+                        TicketHistory.new_status == TicketStatus.CREATED.value,
+                        TicketHistory.comment.ilike("Заявка создана%"),
+                    ),
+                )
+            )
 
-    return history
+        history = query.order_by(TicketHistory.created_at.desc()).all()
+
+        return history
+
+    return await run_db(db, operation, List[HistoryResponse])
 
 
 @router.get("/{ticket_id}/executor-reviews", response_model=List[TicketExecutorReviewParticipant])
-def read_ticket_executor_reviews(
+async def read_ticket_executor_reviews(
         ticket_id: int,
-        db: Session = Depends(get_db),
+        db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    service = TicketService(db)
-    return service.list_executor_reviews_for_ticket(ticket_id, current_user)
+    def operation(db: Session):
+        service = TicketService(db)
+        return service.list_executor_reviews_for_ticket(ticket_id, current_user)
+
+    return await run_db(db, operation, List[TicketExecutorReviewParticipant])
 
 
 @router.post("/{ticket_id}/executor-reviews", response_model=TicketExecutorReviewResponse)
-def save_ticket_executor_review(
+async def save_ticket_executor_review(
         ticket_id: int,
         payload: TicketExecutorReviewCreate,
-        db: Session = Depends(get_db),
+        db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    service = TicketService(db)
-    review = service.create_executor_review(ticket_id, payload, current_user)
-    db.commit()
-    db.refresh(review)
-    return service._review_payload(review)
+    def operation(db: Session):
+        service = TicketService(db)
+        review = service.create_executor_review(ticket_id, payload, current_user)
+        db.commit()
+        db.refresh(review)
+        return service._review_payload(review)
+
+    return await run_db(db, operation, TicketExecutorReviewResponse)
 
 
 @router.get("/history/all", response_model=List[HistoryResponse])
-def read_all_history(
+async def read_all_history(
         ticket_id: int | None = None,
         user_id: int | None = None,
         created_from: datetime | None = None,
         created_to: datetime | None = None,
-        db: Session = Depends(get_db),
+        db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    if current_user.role not in [UserRole.ADMIN, UserRole.DISPATCHER, UserRole.AUDITOR]:
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+    def operation(db: Session):
+        if current_user.role not in [UserRole.ADMIN, UserRole.DISPATCHER, UserRole.AUDITOR]:
+            raise HTTPException(status_code=403, detail="Not enough permissions")
 
-    q = db.query(TicketHistory).options(joinedload(TicketHistory.user))
+        q = db.query(TicketHistory).options(joinedload(TicketHistory.user))
 
-    if ticket_id is not None:
-        q = q.filter(TicketHistory.ticket_id == ticket_id)
-    if user_id is not None:
-        q = q.filter(TicketHistory.user_id == user_id)
-    if created_from is not None:
-        q = q.filter(TicketHistory.created_at >= created_from)
-    if created_to is not None:
-        q = q.filter(TicketHistory.created_at <= created_to)
+        if ticket_id is not None:
+            q = q.filter(TicketHistory.ticket_id == ticket_id)
+        if user_id is not None:
+            q = q.filter(TicketHistory.user_id == user_id)
+        if created_from is not None:
+            q = q.filter(TicketHistory.created_at >= created_from)
+        if created_to is not None:
+            q = q.filter(TicketHistory.created_at <= created_to)
 
-    return q.order_by(TicketHistory.created_at.desc()).limit(1000).all()
+        return q.order_by(TicketHistory.created_at.desc()).limit(1000).all()
+
+    return await run_db(db, operation, List[HistoryResponse])

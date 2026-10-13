@@ -1,3 +1,6 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.operations import run_db
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
@@ -18,73 +21,94 @@ router = APIRouter()
 
 
 @router.get("/houses", response_model=list[PasswordRecoveryHouseOption])
-def list_password_recovery_houses(
+async def list_password_recovery_houses(
     query: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    service = PasswordRecoveryService(db)
-    return service.list_house_options(query=query, limit=limit)
+    def operation(db: Session):
+        service = PasswordRecoveryService(db)
+        return service.list_house_options(query=query, limit=limit)
+
+    return await run_db(db, operation, list[PasswordRecoveryHouseOption])
 
 
 @router.get("/houses/{house_id}/apartments", response_model=list[PasswordRecoveryApartmentOption])
-def list_password_recovery_apartments(
+async def list_password_recovery_apartments(
     house_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    service = PasswordRecoveryService(db)
-    return service.list_apartment_options(house_id)
+    def operation(db: Session):
+        service = PasswordRecoveryService(db)
+        return service.list_apartment_options(house_id)
+
+    return await run_db(db, operation, list[PasswordRecoveryApartmentOption])
 
 
 @router.post("/requests", response_model=PasswordRecoveryResponse)
-def create_password_recovery_request(
+async def create_password_recovery_request(
     payload: PasswordRecoveryCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    service = PasswordRecoveryService(db)
-    return service.create_request(payload)
+    def operation(db: Session):
+        service = PasswordRecoveryService(db)
+        return service.create_request(payload)
+
+    return await run_db(db, operation, PasswordRecoveryResponse)
 
 
 @router.get("/requests", response_model=list[PasswordRecoveryResponse])
-def list_password_recovery_requests(
+async def list_password_recovery_requests(
     status: str | None = Query(default=None),
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    service = PasswordRecoveryService(db)
-    return service.list_requests(current_user=current_user, status=status, skip=skip, limit=limit)
+    def operation(db: Session):
+        service = PasswordRecoveryService(db)
+        return service.list_requests(current_user=current_user, status=status, skip=skip, limit=limit)
+
+    return await run_db(db, operation, list[PasswordRecoveryResponse])
 
 
 @router.get("/requests/{request_id}", response_model=PasswordRecoveryResponse)
-def get_password_recovery_request(
+async def get_password_recovery_request(
     request_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    service = PasswordRecoveryService(db)
-    return service.get_request(request_id, current_user=current_user)
+    def operation(db: Session):
+        service = PasswordRecoveryService(db)
+        return service.get_request(request_id, current_user=current_user)
+
+    return await run_db(db, operation, PasswordRecoveryResponse)
 
 
 @router.post("/requests/{request_id}/reset", response_model=PasswordRecoveryResetResponse)
-def reset_password_by_recovery_request(
+async def reset_password_by_recovery_request(
     request_id: int,
     payload: PasswordRecoveryResetRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    service = PasswordRecoveryService(db)
-    request_obj, temporary_password = service.reset_password(request_id, payload, current_user=current_user)
-    return {"request": request_obj, "temporary_password": temporary_password}
+    def operation(db: Session):
+        service = PasswordRecoveryService(db)
+        request_obj, temporary_password = service.reset_password(request_id, payload, current_user=current_user)
+        return {"request": request_obj, "temporary_password": temporary_password}
+
+    return await run_db(db, operation, PasswordRecoveryResetResponse)
 
 
 @router.post("/requests/{request_id}/reject", response_model=PasswordRecoveryResponse)
-def reject_password_recovery_request(
+async def reject_password_recovery_request(
     request_id: int,
     payload: PasswordRecoveryDecision,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    service = PasswordRecoveryService(db)
-    return service.reject_request(request_id, payload, current_user=current_user)
+    def operation(db: Session):
+        service = PasswordRecoveryService(db)
+        return service.reject_request(request_id, payload, current_user=current_user)
+
+    return await run_db(db, operation, PasswordRecoveryResponse)

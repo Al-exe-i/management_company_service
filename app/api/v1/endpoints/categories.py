@@ -1,3 +1,6 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.operations import run_db
+
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,32 +16,41 @@ router = APIRouter()
 
 
 @router.post("/", response_model=CategoryResponse)
-def create_category(
+async def create_category(
     category_in: CategoryCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not can_manage_service_settings(current_user):
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+    def operation(db: Session):
+        if not can_manage_service_settings(current_user):
+            raise HTTPException(status_code=403, detail="Not enough permissions")
 
-    service = CategoryService(db)
-    return service.create_category(category_in)
+        service = CategoryService(db)
+        return service.create_category(category_in)
+
+    return await run_db(db, operation, CategoryResponse)
 
 
 @router.get("/", response_model=List[CategoryResponse])
-def read_categories(category_type: str | None = "problem", db: Session = Depends(get_db)):
-    service = CategoryService(db)
-    return service.get_all(category_type=category_type)
+async def read_categories(category_type: str | None = "problem", db: AsyncSession = Depends(get_db)):
+    def operation(db: Session):
+        service = CategoryService(db)
+        return service.get_all(category_type=category_type)
+
+    return await run_db(db, operation, List[CategoryResponse])
 
 
 @router.delete("/{category_id}")
-def delete_category(
+async def delete_category(
     category_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if not can_manage_service_settings(current_user):
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+    def operation(db: Session):
+        if not can_manage_service_settings(current_user):
+            raise HTTPException(status_code=403, detail="Not enough permissions")
 
-    service = CategoryService(db)
-    return service.delete_category(category_id)
+        service = CategoryService(db)
+        return service.delete_category(category_id)
+
+    return await run_db(db, operation, None)

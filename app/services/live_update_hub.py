@@ -10,7 +10,7 @@ class LiveUpdateHub:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._lock = Lock()
 
-    def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+    def set_loop(self, loop: asyncio.AbstractEventLoop | None) -> None:
         with self._lock:
             self._loop = loop
 
