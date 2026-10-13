@@ -9,10 +9,10 @@ from app.schemas.location import ApartmentResponse, HouseResponse
 class UserBase(BaseModel):
     full_name: str
 
-    # Новый логин
+
     login: str | None = None
 
-    # Старое поле оставляем для совместимости
+
     phone: str | None = None
 
     contact_phone: str | None = None
@@ -30,7 +30,10 @@ class UserBase(BaseModel):
     can_manage_remarks: bool = False
     can_manage_house_info: bool = False
     can_manage_announcements: bool = False
+    can_manage_password_recovery: bool = False
+    can_approve_registrations: bool = False
     allowed_ticket_priorities: str | None = None
+    blocks_apartment_resident_additions: bool = False
 
 
 class UserCreate(UserBase):
@@ -48,6 +51,7 @@ class UserResponse(UserBase):
     apartment_ref: ApartmentResponse | None = None
     banned_until: datetime | None = None
     ban_reason: str | None = None
+    must_change_password: bool = False
 
     class Config:
         from_attributes = True
@@ -63,6 +67,7 @@ class UserUpdate(BaseModel):
     phone: str | None = None
     login: str | None = None
     contact_phone: str | None = None
+    blocks_apartment_resident_additions: bool | None = None
 
 
 class UserAdminUpdate(BaseModel):
@@ -83,7 +88,21 @@ class UserAdminUpdate(BaseModel):
     can_manage_remarks: bool | None = None
     can_manage_house_info: bool | None = None
     can_manage_announcements: bool | None = None
+    can_manage_password_recovery: bool | None = None
+    can_approve_registrations: bool | None = None
     allowed_ticket_priorities: str | None = None
+    blocks_apartment_resident_additions: bool | None = None
+
+
+class ApartmentResidentResponse(BaseModel):
+    id: int
+    full_name: str
+    contact_phone: str | None = None
+    is_current_user: bool = False
+    blocks_apartment_resident_additions: bool = False
+
+    class Config:
+        from_attributes = True
 
 
 class UserChangeHistoryResponse(BaseModel):

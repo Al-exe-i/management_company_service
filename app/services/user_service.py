@@ -4,7 +4,12 @@ from zoneinfo import ZoneInfo
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, joinedload
 
-from app.core.auth_validation import normalize_allowed_priorities, validate_login_value, validate_password_value
+from app.core.auth_validation import (
+    normalize_allowed_priorities,
+    validate_contact_phone_value,
+    validate_login_value,
+    validate_password_value,
+)
 from app.core.security import get_password_hash, verify_password
 from app.models.executor import ExecutorProfile
 from app.models.location import Apartment
@@ -25,6 +30,8 @@ class UserService:
         "can_manage_remarks",
         "can_manage_house_info",
         "can_manage_announcements",
+        "can_manage_password_recovery",
+        "can_approve_registrations",
     ]
     DISPATCHER_PERMISSION_FIELDS = ["can_manage_houses", "can_ban_residents"]
 
@@ -43,6 +50,20 @@ class UserService:
 
     def _apply_apartment_binding(self, payload: dict) -> dict:
         apartment_id = payload.get("apartment_id")
+
+        if apartment_id is None and payload.get("house_id") is not None and payload.get("apartment"):
+            apartment_obj = (
+                self.db.query(Apartment)
+                .filter(
+                    Apartment.house_id == payload.get("house_id"),
+                    Apartment.apartment_number == str(payload.get("apartment")),
+                    Apartment.is_active.is_(True),
+                )
+                .first()
+            )
+            if apartment_obj:
+                payload["apartment_id"] = apartment_obj.id
+                apartment_id = apartment_obj.id
 
         if apartment_id is None:
             return payload
@@ -69,11 +90,31 @@ class UserService:
 
         return payload
 
+    def _apartment_additions_blocked(self, apartment_id: int | None, exclude_user_id: int | None = None) -> bool:
+        if apartment_id is None:
+            return False
+
+        query = self.db.query(User.id).filter(
+            User.role == UserRole.RESIDENT,
+            User.apartment_id == apartment_id,
+            User.blocks_apartment_resident_additions.is_(True),
+        )
+        if exclude_user_id is not None:
+            query = query.filter(User.id != exclude_user_id)
+        return query.first() is not None
+
+    def _ensure_apartment_accepts_resident(self, apartment_id: int | None, exclude_user_id: int | None = None) -> None:
+        if self._apartment_additions_blocked(apartment_id, exclude_user_id):
+            raise HTTPException(
+                status_code=409,
+                detail="Добавление жителей в эту квартиру запрещено зарегистрированным жителем",
+            )
+
     def _normalize_auth_fields(self, payload: dict) -> dict:
         login = payload.get("login")
         phone = payload.get("phone")
 
-        # Для обратной совместимости: если логин не передан, используем старое поле phone.
+
         if not login and phone:
             payload["login"] = validate_login_value(phone)
         elif login:
@@ -82,9 +123,15 @@ class UserService:
         if not payload.get("login"):
             raise HTTPException(status_code=400, detail="Введите логин")
 
-        # В проекте legacy-поле phone продолжает хранить логин для совместимости.
+
         payload["phone"] = payload["login"]
 
+        return payload
+
+    def _normalize_contact_phone_field(self, payload: dict, *, required: bool = False) -> dict:
+        if "contact_phone" not in payload:
+            return payload
+        payload["contact_phone"] = validate_contact_phone_value(payload.get("contact_phone"), required=required)
         return payload
 
     def _ensure_login_available(self, login: str, current_user_id: int | None = None) -> None:
@@ -218,6 +265,10 @@ class UserService:
         target_role = user_data.get("role", UserRole.RESIDENT)
         self._ensure_can_create_target_role(actor, target_role)
         user_data = self._normalize_role_permissions(user_data)
+        user_data = self._normalize_contact_phone_field(
+            user_data,
+            required=self._role_value(target_role) == UserRole.RESIDENT.value,
+        )
 
         self._ensure_login_available(user_data["login"])
 
@@ -225,6 +276,8 @@ class UserService:
         user_data["password_hash"] = get_password_hash(plain_password)
 
         user_data = self._apply_apartment_binding(user_data)
+        if self._role_value(target_role) == UserRole.RESIDENT.value:
+            self._ensure_apartment_accepts_resident(user_data.get("apartment_id"))
 
         return self.user_repo.create(user_data)
 
@@ -245,8 +298,43 @@ class UserService:
             raise HTTPException(status_code=400, detail="Incorrect old password")
 
         user.password_hash = get_password_hash(validate_password_value(new_password))
+        user.must_change_password = False
         self.user_repo.db.commit()
         return {"status": "password updated"}
+
+    def list_apartment_residents(self, current_user: User) -> list[User]:
+        if current_user.role != UserRole.RESIDENT:
+            raise HTTPException(status_code=403, detail="Only residents can view apartment residents")
+
+        apartment_id = current_user.apartment_id
+        if apartment_id is None and current_user.house_id is not None and current_user.apartment:
+            apartment = (
+                self.db.query(Apartment)
+                .filter(
+                    Apartment.house_id == current_user.house_id,
+                    Apartment.apartment_number == str(current_user.apartment),
+                    Apartment.is_active.is_(True),
+                )
+                .first()
+            )
+            if apartment:
+                current_user.apartment_id = apartment.id
+                self.db.commit()
+                self.db.refresh(current_user)
+                apartment_id = apartment.id
+
+        if apartment_id is None:
+            return []
+
+        return (
+            self.db.query(User)
+            .filter(
+                User.role == UserRole.RESIDENT,
+                User.apartment_id == apartment_id,
+            )
+            .order_by(User.full_name.asc(), User.id.asc())
+            .all()
+        )
 
     def ban_user(self, user_id: int, ban_data: UserBan, admin_user: User):
         if not can_ban_residents(admin_user):
@@ -282,6 +370,13 @@ class UserService:
 
         data = update_data.model_dump(exclude_unset=True)
         data = self._normalize_auth_fields(data) if ("login" in data or "phone" in data) else data
+        data = self._normalize_contact_phone_field(data)
+
+        if "blocks_apartment_resident_additions" in data:
+            if user.role != UserRole.RESIDENT:
+                raise HTTPException(status_code=400, detail="Запрет добавления жителей доступен только жителям")
+            if data.get("blocks_apartment_resident_additions") and user.apartment_id is None:
+                raise HTTPException(status_code=400, detail="У пользователя не указана квартира")
 
         if "login" in data and data["login"]:
             self._ensure_login_available(data["login"], current_user_id=user_id)
@@ -306,12 +401,23 @@ class UserService:
         data = update_data.model_dump(exclude_unset=True)
         self._validate_admin_update_role_change(admin_user, user, data)
         data = self._normalize_auth_fields(data) if ("login" in data or "phone" in data) else data
+        data = self._normalize_contact_phone_field(data)
 
         if "login" in data and data["login"]:
             self._ensure_login_available(data["login"], current_user_id=user_id)
 
         data = self._apply_apartment_binding(data)
         data = self._normalize_role_permissions(data, current_role=user.role)
+        final_role = data.get("role", user.role)
+        final_apartment_id = data.get("apartment_id", user.apartment_id)
+        if self._role_value(final_role) == UserRole.RESIDENT.value:
+            should_check_apartment = (
+                user.role != UserRole.RESIDENT
+                or ("apartment_id" in data and data.get("apartment_id") != user.apartment_id)
+                or ("role" in data and self._role_value(data.get("role")) == UserRole.RESIDENT.value)
+            )
+            if should_check_apartment:
+                self._ensure_apartment_accepts_resident(final_apartment_id, exclude_user_id=user.id)
 
         self._record_profile_changes(user, data, admin_user)
 

@@ -57,6 +57,14 @@ def can_manage_announcements(user: User) -> bool:
     )
 
 
+def can_manage_password_recovery(user: User) -> bool:
+    return is_admin(user) or (is_admin_assistant(user) and bool(user.can_manage_password_recovery))
+
+
+def can_approve_registrations(user: User) -> bool:
+    return is_admin(user) or (is_admin_assistant(user) and bool(user.can_approve_registrations))
+
+
 def is_staff_like(user: User) -> bool:
     return user.role in [
         UserRole.ADMIN,

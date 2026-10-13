@@ -15,9 +15,11 @@ from app.api.v1.endpoints import (
     messages,
     notifications,
     operations,
+    password_recovery,
     remarks,
     reporting,
     settings,
+    resident_registration,
     ticket_comments,
     ticket_complaints,
     tickets,
@@ -43,6 +45,8 @@ router.include_router(complaints.router, prefix="/complaints", tags=["complaints
 router.include_router(ticket_complaints.router, prefix="/ticket-complaints", tags=["ticket-complaints"])
 router.include_router(messages.router, prefix="/messages", tags=["messages"])
 router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
+router.include_router(password_recovery.router, prefix="/password-recovery", tags=["password-recovery"])
+router.include_router(resident_registration.router, prefix="/registration", tags=["registration"])
 router.include_router(remarks.router, prefix="/remarks", tags=["remarks"])
 router.include_router(house_info.router, prefix="/house-info", tags=["house-info"])
 router.include_router(live_updates.router, prefix="/ws", tags=["live-updates"])

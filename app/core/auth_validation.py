@@ -6,6 +6,7 @@ from fastapi import HTTPException
 CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
 WHITESPACE_RE = re.compile(r"\s")
 VALID_PRIORITIES = {"low", "normal", "high", "emergency"}
+CONTACT_PHONE_RE = re.compile(r"^\+7\d{10}$")
 
 
 def validate_login_value(login: str | None) -> str:
@@ -23,9 +24,33 @@ def validate_password_value(password: str | None) -> str:
     value = str(password or "")
     if not value:
         raise HTTPException(status_code=400, detail="Введите пароль")
+    if len(value) < 3:
+        raise HTTPException(status_code=400, detail="Пароль должен содержать не менее 3 символов")
     if CYRILLIC_RE.search(value):
         raise HTTPException(status_code=400, detail="Пароль не должен содержать русские буквы")
     return value
+
+
+def validate_contact_phone_value(phone: str | None, *, required: bool = False) -> str | None:
+    raw = str(phone or "").strip()
+    if not raw or raw == "+7":
+        if required:
+            raise HTTPException(status_code=400, detail="Введите контактный телефон")
+        return None
+
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 10:
+        normalized = f"+7{digits}"
+    elif len(digits) == 11 and digits.startswith("8"):
+        normalized = f"+7{digits[1:]}"
+    elif len(digits) == 11 and digits.startswith("7"):
+        normalized = f"+{digits}"
+    else:
+        raise HTTPException(status_code=400, detail="Укажите контактный телефон в формате +79001234567")
+
+    if not CONTACT_PHONE_RE.fullmatch(normalized):
+        raise HTTPException(status_code=400, detail="Укажите контактный телефон в формате +79001234567")
+    return normalized
 
 
 def normalize_allowed_priorities(value: str | None) -> str | None:

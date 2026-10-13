@@ -10,7 +10,7 @@ from app.core.profanity import ensure_clean_text
 from app.models.app_settings import AppSettings
 from app.models.user import User, UserRole
 from app.schemas.app_settings import AppSettingsUpdate
-from app.services.permissions import can_manage_service_settings
+from app.services.permissions import can_manage_password_recovery, can_manage_service_settings
 
 
 class AppSettingsService:
@@ -23,6 +23,9 @@ class AppSettingsService:
     DEFAULT_COMPLAINT_PRIMARY_LIMIT = 2
     MIN_COMPLAINT_PRIMARY_LIMIT = 1
     MAX_COMPLAINT_PRIMARY_LIMIT = 10
+    DEFAULT_PASSWORD_RECOVERY_COOLDOWN_MINUTES = 5
+    MIN_PASSWORD_RECOVERY_COOLDOWN_MINUTES = 1
+    MAX_PASSWORD_RECOVERY_COOLDOWN_MINUTES = 1440
     LOGIN_BACKGROUND_DIR = os.path.join("static", "uploads", "settings")
     DEFAULT_APP_BRAND = "UK WEB"
     DEFAULT_LOGIN_TITLE = "Вход в веб-версию"
@@ -53,6 +56,13 @@ class AppSettingsService:
                 self.MIN_COMPLAINT_PRIMARY_LIMIT,
                 min(int(getattr(settings, "complaint_primary_limit", None) or self.DEFAULT_COMPLAINT_PRIMARY_LIMIT), self.MAX_COMPLAINT_PRIMARY_LIMIT),
             )
+            normalized_recovery_cooldown = max(
+                self.MIN_PASSWORD_RECOVERY_COOLDOWN_MINUTES,
+                min(
+                    int(getattr(settings, "password_recovery_cooldown_minutes", None) or self.DEFAULT_PASSWORD_RECOVERY_COOLDOWN_MINUTES),
+                    self.MAX_PASSWORD_RECOVERY_COOLDOWN_MINUTES,
+                ),
+            )
             if settings.complaint_escalate_after_minutes != normalized_escalation:
                 settings.complaint_escalate_after_minutes = normalized_escalation
                 changed = True
@@ -61,6 +71,9 @@ class AppSettingsService:
                 changed = True
             if getattr(settings, "complaint_primary_limit", None) != normalized_primary_limit:
                 settings.complaint_primary_limit = normalized_primary_limit
+                changed = True
+            if getattr(settings, "password_recovery_cooldown_minutes", None) != normalized_recovery_cooldown:
+                settings.password_recovery_cooldown_minutes = normalized_recovery_cooldown
                 changed = True
             if not getattr(settings, "mobile_login_brand", None):
                 settings.mobile_login_brand = self.DEFAULT_MOBILE_LOGIN_BRAND
@@ -83,6 +96,7 @@ class AppSettingsService:
             complaint_escalate_after_minutes=self.DEFAULT_COMPLAINT_ESCALATION_MINUTES,
             complaint_overdue_after_minutes=self.DEFAULT_COMPLAINT_OVERDUE_MINUTES,
             complaint_primary_limit=self.DEFAULT_COMPLAINT_PRIMARY_LIMIT,
+            password_recovery_cooldown_minutes=self.DEFAULT_PASSWORD_RECOVERY_COOLDOWN_MINUTES,
             app_brand=self.DEFAULT_APP_BRAND,
             login_title=self.DEFAULT_LOGIN_TITLE,
             mobile_login_brand=self.DEFAULT_MOBILE_LOGIN_BRAND,
@@ -137,17 +151,18 @@ class AppSettingsService:
 
     def update_settings(self, data: AppSettingsUpdate, current_user: User) -> AppSettings:
         can_manage_branding = can_manage_service_settings(current_user)
-        can_manage_escalation = can_manage_service_settings(current_user)
-        can_manage_overdue = current_user.role in [UserRole.ADMIN, UserRole.AUDITOR]
-        can_manage_primary_limit = current_user.role in [UserRole.ADMIN, UserRole.AUDITOR]
+        can_manage_escalation = current_user.role == UserRole.AUDITOR
+        can_manage_overdue = current_user.role == UserRole.AUDITOR
+        can_manage_primary_limit = current_user.role == UserRole.AUDITOR
+        can_manage_recovery = can_manage_password_recovery(current_user)
 
-        if not (can_manage_branding or can_manage_overdue or can_manage_primary_limit):
+        if not (can_manage_branding or can_manage_escalation or can_manage_overdue or can_manage_primary_limit or can_manage_recovery):
             raise HTTPException(status_code=403, detail="Настройки может изменять только администратор или аудитор")
 
         settings = self.get_settings()
         if data.complaint_escalate_after_minutes is not None:
             if not can_manage_escalation:
-                raise HTTPException(status_code=403, detail="Только администратор может менять порог обращения в контролирующий орган")
+                raise HTTPException(status_code=403, detail="Только аудитор может менять порог обращения в контролирующий орган")
             minutes = int(data.complaint_escalate_after_minutes)
             if minutes < self.MIN_COMPLAINT_ESCALATION_MINUTES or minutes > self.MAX_COMPLAINT_ESCALATION_MINUTES:
                 raise HTTPException(
@@ -157,7 +172,7 @@ class AppSettingsService:
             settings.complaint_escalate_after_minutes = minutes
         if data.complaint_overdue_after_minutes is not None:
             if not can_manage_overdue:
-                raise HTTPException(status_code=403, detail="Только аудитор или администратор может менять порог жалобы на отсутствие реакции")
+                raise HTTPException(status_code=403, detail="Только аудитор может менять порог жалобы на отсутствие реакции")
             minutes = int(data.complaint_overdue_after_minutes)
             if minutes < self.MIN_COMPLAINT_OVERDUE_MINUTES or minutes > self.MAX_COMPLAINT_OVERDUE_MINUTES:
                 raise HTTPException(
@@ -167,7 +182,7 @@ class AppSettingsService:
             settings.complaint_overdue_after_minutes = minutes
         if data.complaint_primary_limit is not None:
             if not can_manage_primary_limit:
-                raise HTTPException(status_code=403, detail="Только аудитор или администратор может менять лимит жалоб")
+                raise HTTPException(status_code=403, detail="Только аудитор может менять лимит жалоб")
             limit = int(data.complaint_primary_limit)
             if limit < self.MIN_COMPLAINT_PRIMARY_LIMIT or limit > self.MAX_COMPLAINT_PRIMARY_LIMIT:
                 raise HTTPException(
@@ -175,6 +190,13 @@ class AppSettingsService:
                     detail="Лимит обычных жалоб по заявке должен быть от 1 до 10",
                 )
             settings.complaint_primary_limit = limit
+        if data.password_recovery_cooldown_minutes is not None:
+            if not can_manage_recovery:
+                raise HTTPException(status_code=403, detail="Недостаточно прав для настройки восстановления доступа")
+            minutes = int(data.password_recovery_cooldown_minutes)
+            if minutes < self.MIN_PASSWORD_RECOVERY_COOLDOWN_MINUTES or minutes > self.MAX_PASSWORD_RECOVERY_COOLDOWN_MINUTES:
+                raise HTTPException(status_code=400, detail="Порог восстановления доступа должен быть от 1 минуты до 24 часов")
+            settings.password_recovery_cooldown_minutes = minutes
         if data.app_brand is not None:
             if not can_manage_branding:
                 raise HTTPException(status_code=403, detail="Только администратор может менять брендирование")

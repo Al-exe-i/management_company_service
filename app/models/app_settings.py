@@ -12,6 +12,7 @@ class AppSettings(Base):
     complaint_escalate_after_minutes = Column(Integer, nullable=False, default=360)
     complaint_overdue_after_minutes = Column(Integer, nullable=False, default=360)
     complaint_primary_limit = Column(Integer, nullable=False, default=2)
+    password_recovery_cooldown_minutes = Column(Integer, nullable=False, default=5)
     app_brand = Column(String(120), nullable=False, default="UK WEB")
     login_title = Column(String(200), nullable=False, default="Вход в веб-версию")
     mobile_login_brand = Column(String(120), nullable=False, default="Управляющая компания")

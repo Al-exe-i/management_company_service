@@ -9,6 +9,7 @@ from app.models.location import Apartment
 from app.models.user import User, UserChangeHistory, UserRole
 from app.repositories.user_repository import UserRepository
 from app.schemas.user import (
+    ApartmentResidentResponse,
     ResidentAutofillRequest,
     ResidentAutofillResponse,
     UserAdminUpdate,
@@ -89,6 +90,25 @@ def read_users_me(
             db.commit()
             db.refresh(current_user)
     return current_user
+
+
+@router.get("/me/apartment-residents", response_model=List[ApartmentResidentResponse])
+def read_my_apartment_residents(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    service = UserService(db)
+    residents = service.list_apartment_residents(current_user)
+    return [
+        ApartmentResidentResponse(
+            id=user.id,
+            full_name=user.full_name,
+            contact_phone=user.contact_phone,
+            is_current_user=user.id == current_user.id,
+            blocks_apartment_resident_additions=user.blocks_apartment_resident_additions,
+        )
+        for user in residents
+    ]
 
 
 @router.patch("/me", response_model=UserResponse)
