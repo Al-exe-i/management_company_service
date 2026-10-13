@@ -102,6 +102,9 @@ class AttentionTicketResponse(BaseModel):
 
     reopened_count: int
     reasons: list[str]
+    first_response_overdue: bool = False
+    execution_overdue: bool = False
+    open_quality_complaints: int = 0
 
 
 class AttentionTicketListResponse(BaseModel):

@@ -294,8 +294,8 @@ async def export_attention_tickets_csv(
             writer.writerow([
                 item.ticket_id,
                 item.title,
-                item.status,
-                item.priority,
+                item.status.value,
+                item.priority.value,
                 item.house_address,
                 item.apartment,
                 item.category_name,

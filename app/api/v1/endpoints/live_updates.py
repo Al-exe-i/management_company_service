@@ -43,7 +43,9 @@ async def websocket_updates(websocket: WebSocket):
 
         await live_update_hub.connect(websocket)
         while True:
-            await websocket.receive_text()
+            message = await websocket.receive_text()
+            if message == "ping":
+                await websocket.send_text("pong")
     except (JWTError, ValueError, TypeError):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
     except WebSocketDisconnect:

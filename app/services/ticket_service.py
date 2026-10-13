@@ -14,6 +14,7 @@ from app.models.executor import ExecutorProfile
 from app.models.history import TicketHistory
 from app.models.location import Apartment
 from app.models.ticket import Ticket, TicketFile, TicketFileKind, TicketPriority, TicketStatus
+from app.models.ticket_complaint import ComplaintStatus, TicketComplaint
 from app.models.ticket_executor_review import TicketExecutorReview
 from app.models.user import User, UserRole
 from app.repositories.ticket_repository import TicketRepository
@@ -777,7 +778,11 @@ class TicketService:
             self._ensure_resident_not_banned(current_user)
             if ticket.author_id != current_user.id:
                 raise HTTPException(status_code=403, detail="You can upload files only to your own ticket")
+            if str(kind or "").upper() == TicketFileKind.AFTER.value:
+                raise HTTPException(status_code=403, detail="Фотоотчёт может прикреплять только исполнитель или сотрудник")
         elif current_user.role == UserRole.EXECUTOR:
+            if ticket.executor_id != current_user.id:
+                raise HTTPException(status_code=403, detail="Фотоотчёт может изменять только текущий исполнитель заявки")
             normalized_kind = str(kind or "").upper()
             if normalized_kind != TicketFileKind.AFTER.value:
                 raise HTTPException(status_code=403, detail="Executor can upload only completion photos")
@@ -823,7 +828,11 @@ class TicketService:
             self._ensure_resident_not_banned(current_user)
             if ticket.author_id != current_user.id:
                 raise HTTPException(status_code=403, detail="You can delete files only from your own ticket")
+            if ticket_file.kind == TicketFileKind.AFTER:
+                raise HTTPException(status_code=403, detail="Житель не может удалять фотоотчёт исполнителя")
         elif current_user.role == UserRole.EXECUTOR:
+            if ticket.executor_id != current_user.id:
+                raise HTTPException(status_code=403, detail="Фотоотчёт может изменять только текущий исполнитель заявки")
             file_kind = ticket_file.kind.value if hasattr(ticket_file.kind, "value") else str(ticket_file.kind or "")
             if file_kind.upper() != TicketFileKind.AFTER.value:
                 raise HTTPException(status_code=403, detail="Executor can delete only completion photos")
@@ -834,6 +843,8 @@ class TicketService:
                     status_code=400,
                     detail="Можно удалить только фотоотчёт текущего выполнения заявки",
                 )
+        elif current_user.role not in [UserRole.ADMIN, UserRole.DISPATCHER]:
+            raise HTTPException(status_code=403, detail="Недостаточно прав для удаления фотографии")
 
         disk_path = ticket_file.file_path.lstrip("/").replace("/", os.sep)
         if os.path.exists(disk_path):
@@ -1034,6 +1045,14 @@ class TicketService:
                 raise HTTPException(status_code=403, detail="Resident can only accept completed work")
             if ticket.status != TicketStatus.DONE:
                 raise HTTPException(status_code=400, detail="Only completed ticket can be accepted")
+            if self.db.query(TicketComplaint.id).filter(
+                TicketComplaint.ticket_id == ticket.id,
+                TicketComplaint.status == ComplaintStatus.OPEN,
+            ).first():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя принять работу, пока по заявке имеются нерешённые жалобы. Отмените текущие жалобы либо дождитесь их рассмотрения.",
+                )
         elif current_user.role == UserRole.EXECUTOR:
             if ticket.executor_id != current_user.id:
                 raise HTTPException(status_code=403, detail="Not enough permissions")
@@ -1075,6 +1094,15 @@ class TicketService:
             elif payload.status == TicketStatus.DONE:
                 if old_status != TicketStatus.IN_PROGRESS:
                     raise HTTPException(status_code=400, detail="Завершить можно только заявку в работе")
+                if not ticket.is_external_request:
+                    photos = self.db.query(TicketFile.id).filter(
+                        TicketFile.ticket_id == ticket.id,
+                        TicketFile.kind == TicketFileKind.AFTER,
+                    )
+                    if ticket.started_at:
+                        photos = photos.filter(TicketFile.created_at >= ticket.started_at)
+                    if photos.first() is None:
+                        raise HTTPException(status_code=400, detail="Сначала прикрепите фотоотчёт текущего выполнения заявки")
                 comment_text = comment_text or "Работа выполнена."
                 ticket.result_comment = self._compose_result_comment(comment_text, resident_review)
                 ticket.done_at = datetime.utcnow()

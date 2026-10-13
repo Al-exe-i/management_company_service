@@ -552,6 +552,9 @@ class ReportingService:
                     planned_visit_at=ticket.planned_visit_at,
                     reopened_count=ticket.reopened_count or 0,
                     reasons=reasons,
+                    first_response_overdue="first_response_overdue" in reasons,
+                    execution_overdue="execution_overdue" in reasons,
+                    open_quality_complaints=complaints_by_ticket.get(ticket.id, 0),
                 )
             )
 

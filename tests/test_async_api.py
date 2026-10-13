@@ -1,12 +1,17 @@
 import asyncio
 import base64
+import csv
+import io
 import inspect as python_inspect
 import os
+import socket
 import unittest
 import uuid
 from pathlib import Path
 
 import httpx
+import uvicorn
+from websockets.asyncio.client import connect
 from sqlalchemy import inspect, select, text
 
 from app.cli.create_admin import create_admin
@@ -17,6 +22,7 @@ from app.db.operations import run_db
 from app.db.session import SessionLocal, engine
 from app.main import app
 from app.models.user import User, UserRole
+from app.services.live_update_hub import live_update_hub
 
 
 @unittest.skipUnless(os.getenv("RUN_DB_TESTS") == "1", "Set RUN_DB_TESTS=1 with a separate migrated test database")
@@ -47,7 +53,7 @@ class AsyncDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_database_io_yields_to_event_loop(self):
         async with SessionLocal() as db:
-            await db.execute(text("SELECT 1"))
+            self.assertEqual(await db.scalar(text("SHOW TIMEZONE")), "UTC")
             task = asyncio.create_task(run_db(db, lambda session: session.execute(text("SELECT pg_sleep(0.35)"))))
             ticks = 0
             while not task.done():
@@ -55,6 +61,35 @@ class AsyncDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 ticks += 1
             await task
             self.assertGreater(ticks, 4)
+
+    async def test_websocket_auth_releases_database_connection(self):
+        async with SessionLocal() as db:
+            admin_id = await db.scalar(select(User.id).where(User.role == UserRole.ADMIN))
+        if admin_id is None:
+            admin_id = await create_admin("deployment-admin", "test-pass-123", "Deployment administrator")
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+        server = uvicorn.Server(uvicorn.Config(app, log_level="error", lifespan="off"))
+        serving = asyncio.create_task(server.serve(sockets=[listener]))
+        try:
+            for _ in range(100):
+                if server.started:
+                    break
+                await asyncio.sleep(0.02)
+            self.assertTrue(server.started)
+            async with connect(f"ws://127.0.0.1:{port}/api/v1/ws/updates", additional_headers={
+                "Cookie": f"uk_token={create_access_token(admin_id)}",
+            }) as websocket:
+                self.assertEqual(engine.pool.checkedout(), 0)
+                await websocket.send("ping")
+                self.assertEqual(await asyncio.wait_for(websocket.recv(), timeout=2), "pong")
+                await live_update_hub.broadcast({"event": "test-update"})
+                self.assertIn("test-update", await asyncio.wait_for(websocket.recv(), timeout=2))
+        finally:
+            server.should_exit = True
+            await asyncio.wait_for(serving, timeout=5)
+            listener.close()
 
     async def test_schema_and_api_workflows(self):
         async with engine.connect() as connection:
@@ -105,7 +140,7 @@ class AsyncDatabaseTests(unittest.IsolatedAsyncioTestCase):
         resident_headers = await self.login(resident["login"])
         other = await self.request("POST", "/api/v1/users/", headers=admin, json={
             "full_name": "Other resident", "login": f"other-{suffix}", "password": "test-pass-123",
-            "contact_phone": "+79001234568", "role": "resident", "house_id": house["id"], "apartment_id": apartment["id"],
+            "contact_phone": "+79001234568", "role": "resident", "house_id": house["id"], "apartment_id": house["entrances"][0]["apartments"][1]["id"],
         })
         await self.request("POST", "/api/v1/messages/conversations", headers=resident_headers, expected=403, json={"participant_id": other["id"]})
         await self.request("GET", "/api/v1/users/", headers=resident_headers, expected=403)
@@ -132,18 +167,33 @@ class AsyncDatabaseTests(unittest.IsolatedAsyncioTestCase):
             "title": "Test problem", "description": "Please repair the issue", "category_id": category["id"], "place_category_id": place["id"],
         })
         ticket_path = f"/api/v1/tickets/{ticket['id']}"
+        export = await self.client.get("/api/v1/reports/attention-tickets/export.csv", headers=admin)
+        self.assertEqual(export.status_code, 200)
+        exported = next(row for row in csv.DictReader(io.StringIO(export.text)) if row["ticket_id"] == str(ticket["id"]))
+        self.assertEqual(exported["status"], "created")
+        self.assertEqual(exported["first_response_overdue"], "False")
+        await self.request("POST", ticket_path + "/photos?kind=AFTER", headers=resident_headers, expected=403, files={"file": ("wrong.png", b"image", "image/png")})
+        await self.request("GET", ticket_path, expected=403, headers=await self.login(other["login"]))
         for index, (executor, executor_headers) in enumerate(executors):
             await self.request("PATCH", ticket_path + "/assign", headers=admin, json={"executor_id": executor["user_id"]})
             await self.request("PATCH", ticket_path + "/status", headers=executor_headers, json={"status": "in_progress", "comment": "Arriving shortly"})
+            await self.request("PATCH", ticket_path + "/status", headers=executor_headers, expected=400, json={"status": "done"})
             photo = await self.request("POST", ticket_path + "/photos?kind=AFTER", headers=executor_headers, files={
                 "file": ("report.png", base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j9ZkAAAAASUVORK5CYII="), "image/png"),
             })
             self.files.append(photo["file_path"])
+            await self.request("DELETE", f"/api/v1/tickets/photos/{photo['id']}", headers=resident_headers, expected=403)
+            if index == 1:
+                previous_headers = executors[0][1]
+                await self.request("DELETE", f"/api/v1/tickets/photos/{photo['id']}", headers=previous_headers, expected=403)
+                await self.request("POST", ticket_path + "/photos?kind=AFTER", headers=previous_headers, expected=403, files={"file": ("wrong.png", b"image", "image/png")})
+                await self.request("PATCH", ticket_path + "/status", headers=previous_headers, expected=403, json={"status": "done"})
             await self.request("PATCH", ticket_path + "/status", headers=executor_headers, json={"status": "done", "comment": "Work completed"})
             if index == 0:
                 complaint = await self.request("POST", "/api/v1/ticket-complaints/", headers=resident_headers, json={
                     "ticket_id": ticket["id"], "complaint_type": "QUALITY", "description": "The issue remains",
                 })
+                await self.request("PATCH", ticket_path + "/status", headers=resident_headers, expected=400, json={"status": "closed", "resident_rating": 5})
                 await self.request("PATCH", f"/api/v1/ticket-complaints/{complaint['id']}/resolve", headers=admin, json={
                     "status": "RESOLVED", "resolution_comment": "Please repeat the work",
                 })
