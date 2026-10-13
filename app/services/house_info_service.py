@@ -240,9 +240,9 @@ class HouseInfoService:
         self.db.refresh(obj)
         self._notify_house_residents(
             obj.house_id,
-            title="Новый график по дому",
-            message=f"Добавлен график: {obj.title}",
-            notif_type="house_info_schedule",
+            title="Новый полезный контакт",
+            message=f"Добавлен контакт: {obj.title}",
+            notif_type="house_info_contact",
         )
         return obj
 
